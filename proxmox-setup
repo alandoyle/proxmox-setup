@@ -43,14 +43,6 @@ EOF
 #
 ################################################################################
 #
-if [ ! -f /etc/apt/sources.list.d/pve-edge-kernel.list ] ; then
-    echo "Adding Edge Kernel Repository (${VER})"
-    curl -1sLf 'https://dl.cloudsmith.io/public/pve-edge/kernel/gpg.8EC01CCF309B98E7.key' | apt-key add -  &>/dev/null 2>&1
-    echo "deb https://dl.cloudsmith.io/public/pve-edge/kernel/deb/debian bullseye main" >/etc/apt/sources.list.d/pve-edge-kernel.list
-fi
-#
-################################################################################
-#
 echo "Upgrade Proxmox (please be patient)"
 apt-get update &>/dev/null
 apt-get -y dist-upgrade &>/dev/null
