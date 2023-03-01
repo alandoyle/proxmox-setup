@@ -125,6 +125,17 @@ EOF
     update-initramfs -u -k all &>/dev/null
     update-grub2 &>/dev/null
 fi
+if [ ! -f /usr/local/bin/lsiommu ] ; then
+    cat <<EOF >>/usr/local/bin/lsiommu
+#!/bin/bash
+for d in \$(find /sys/kernel/iommu_groups/ -type l | sort -n -k5 -t/); do
+    n=\${d#*/iommu_groups/*}; n=\${n%%/*}
+    printf '[Group %s] ' "\$n"
+    lspci -nns "\${d##*/}"
+done;
+EOF
+    chmod a+x /usr/local/bin/lsiommu
+fi
 #
 ################################################################################
 #
