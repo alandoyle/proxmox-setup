@@ -20,11 +20,6 @@ fi
 #
 ################################################################################
 #
-VER=$(curl -s https://api.github.com/repos/fabianishere/pve-edge-kernel/releases/latest | grep "tag_name" | awk '{print substr($2, 3, length($2)-9) }')
-#
-echo "Using Linux Kernel v${VER}"
-################################################################################
-#
 # Setup repositories
 #
 echo "Disabling Enterprise Repository"
@@ -178,21 +173,21 @@ alias ungz='tar -xvzf'
 
 # Extracts any archive(s) (if unp isn't installed)
 extract () {
-	for archive in "$@"; do
+	for archive in "\$@"; do
 		if [ -f "\$archive" ] ; then
 			case \$archive in
-				\*.tar.bz2)   tar xvjf \$archive    ;;
-				\*.tar.gz)    tar xvzf \$archive    ;;
-				\*.bz2)       bunzip2 \$archive     ;;
-				\*.rar)       rar x \$archive       ;;
-				\*.gz)        gunzip \$archive      ;;
-				\*.tar)       tar xvf \$archive     ;;
-				\*.tbz2)      tar xvjf \$archive    ;;
-				\*.tgz)       tar xvzf \$archive    ;;
-				\*.zip)       unzip \$archive       ;;
-				\*.Z)         uncompress \$archive  ;;
-				\*.7z)        7z x \$archive        ;;
-				\*)           echo "don't know how to extract '\$archive'..." ;;
+				*.tar.bz2)   tar xvjf \$archive    ;;
+				*.tar.gz)    tar xvzf \$archive    ;;
+				*.bz2)       bunzip2 \$archive     ;;
+				*.rar)       rar x \$archive       ;;
+				*.gz)        gunzip \$archive      ;;
+				*.tar)       tar xvf \$archive     ;;
+				*.tbz2)      tar xvjf \$archive    ;;
+				*.tgz)       tar xvzf \$archive    ;;
+				*.zip)       unzip \$archive       ;;
+				*.Z)         uncompress \$archive  ;;
+				*.7z)        7z x \$archive        ;;
+				*)           echo "don't know how to extract '\$archive'..." ;;
 			esac
 		else
 			echo "'\$archive' is not a valid file!"
