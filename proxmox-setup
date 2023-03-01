@@ -222,6 +222,10 @@ fi
 #
 ################################################################################
 #
-#reboot
+read -r -p "Reboot Proxmox VE 7 now? <y/N> " prompt
+if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
+    echo "Rebooting Proxmox VE 7"
+    reboot
+fi
 #
 ################################################################################
