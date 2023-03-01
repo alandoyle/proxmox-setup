@@ -1,5 +1,5 @@
 # proxmox-setup
-My simple Proxmox setup script
+My simple Proxmox setup script for Dev Proxmox servers.
 
 ## Features ##
 
