@@ -1,0 +1,216 @@
+#!/bin/bash
+#
+# My Proxmox setup script
+# 
+# Copyright (C) 2022 Alan Doyle
+#
+# https://github.com/alandoyle/proxmox-setup/
+#
+# License: MIT
+# Based in part on some scripts from https://github.com/tteck/Proxmox/
+#
+################################################################################
+#
+# Root check
+#
+if [ `id -u` -ne 0 ] ; then
+    echo "ERROR: This script needs to be run as root or using sudo."
+    exit 99
+fi
+#
+################################################################################
+#
+VER=$(curl -s https://api.github.com/repos/fabianishere/pve-edge-kernel/releases/latest | grep "tag_name" | awk '{print substr($2, 3, length($2)-9) }')
+#
+echo "Using Linux Kernel v${VER}"
+################################################################################
+#
+# Setup repositories
+#
+echo "Disabling Enterprise Repository"
+sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/pve-enterprise.list
+#
+################################################################################
+#
+echo "Setup PVE7 Sources"
+cat <<EOF >/etc/apt/sources.list
+deb http://ftp.debian.org/debian bullseye main contrib
+deb http://ftp.debian.org/debian bullseye-updates main contrib
+deb http://security.debian.org/debian-security bullseye-security main contrib
+deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription
+# deb http://download.proxmox.com/debian/pve bullseye pvetest
+EOF
+#
+################################################################################
+#
+if [ ! -f /etc/apt/sources.list.d/pve-edge-kernel.list ] ; then
+    echo "Adding Edge Kernel Repository (${VER})"
+    curl -1sLf 'https://dl.cloudsmith.io/public/pve-edge/kernel/gpg.8EC01CCF309B98E7.key' | apt-key add -  &>/dev/null 2>&1
+    echo "deb https://dl.cloudsmith.io/public/pve-edge/kernel/deb/debian bullseye main" >/etc/apt/sources.list.d/pve-edge-kernel.list
+fi
+#
+################################################################################
+#
+echo "Upgrade Proxmox (please be patient)"
+apt-get update &>/dev/null
+apt-get -y dist-upgrade &>/dev/null
+#
+################################################################################
+#
+if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+    echo "Disable Subscription Nag"
+    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
+    apt --reinstall install proxmox-widget-toolkit &>/dev/null
+fi
+#
+################################################################################
+#
+if [ ! -f /usr/bin/lsscsi ] ; then
+    echo "Adding additional applications"
+    apt-get -y install vim aptitude lsscsi git curl gnupg hddtemp pve-kernel-${VER}-edge &>/dev/null
+    if [ ! -f /usr/bin/btop ] ; then
+        wget http://ftp.uk.debian.org/debian/pool/main/b/btop/btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
+        if [ -f btop_1.2.7-1~bpo11+1_amd64.deb ] ; then
+            dpkg -i btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
+            rm btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
+        fi
+    fi
+fi
+if [ !  -f /etc/vim/vimrc.local ] ; then
+    cat <<EOF >/etc/vim/vimrc.local
+if filereadable("\$VIMRUNTIME/defaults.vim")
+  source \$VIMRUNTIME/defaults.vim
+endif
+" now set the line that the defaults file is not reloaded afterwards!
+let skip_defaults_vim = 1
+" turn of mouse
+set mouse=
+" other override settings go here
+syntax on
+EOF
+fi
+#
+################################################################################
+#
+apt-mark hold firmware-linux-free &>/dev/null
+if [ -d /usr/lib/firmware.prev ] ; then
+    echo "Update firmware"
+    cd /usr/lib/firmware
+    git config pull.rebase false
+    git pull &>/dev/null
+else
+    echo "Download firmware"
+    mv /usr/lib/firmware /usr/lib/firmware.prev
+    cd /usr/lib
+    git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git firmware &>/dev/null
+fi
+#
+################################################################################
+#
+if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
+    echo "Enable IOMMU"
+    IOMMU_CPU="amd_iommu=on"
+    dmidecode -s processor-manufacturer | grep Intel &>/dev/null
+    [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
+    cat <<EOF >/etc/default/grub.d/iommu.cfg
+# Enable IOMMU
+GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt \${GRUB_CMDLINE_LINUX_DEFAULT}"
+EOF
+    cat <<EOF >>/etc/modules
+vfio
+vfio_iommu_type1
+vfio_pci
+vfio_virqfd
+EOF
+    update-initramfs -u -k all &>/dev/null
+    update-grub2 &>/dev/null
+fi
+#
+################################################################################
+#
+grep dfspace /root/.bashrc &>/dev/null 2>&1
+if [ $? -ne 0 ] ; then
+    cat <<EOF >>/root/.bashrc
+
+alias dfspace="df -h -x udev -x tmpfs -x cgmfs -x snap"alias pg="less"
+alias cls="clear"
+
+# Change directory aliases
+alias home='cd ~'
+alias cd..='cd ..'
+
+# cd into the old directory
+alias bd='cd "$OLDPWD"'
+
+# Remove a directory and all files
+alias rmd='/bin/rm  --recursive --force --verbose '
+
+# Alias's for multiple directory listing commands
+alias la='ls -Alh' # show hidden files
+alias ls='ls -aFh --color=always' # add colors and file type extensions
+alias lx='ls -lXBh' # sort by extension
+alias lk='ls -lSrh' # sort by size
+alias lc='ls -lcrh' # sort by change time
+alias lu='ls -lurh' # sort by access time
+alias lr='ls -lRh' # recursive ls
+alias lt='ls -ltrh' # sort by date
+alias lm='ls -alh |more' # pipe through 'more'
+alias lw='ls -xAh' # wide listing format
+alias ll='ls -Fls' # long listing format
+alias labc='ls -lap' #alphabetical sort
+alias lf="ls -l | egrep -v '^d'" # files only
+alias ldir="ls -l | egrep '^d'" # directories only
+
+# Search command line history
+alias h="history | grep "
+
+# Alias's for archives
+alias mktar='tar -cvf'
+alias mkbz2='tar -cvjf'
+alias mkgz='tar -cvzf'
+alias untar='tar -xvf'
+alias unbz2='tar -xvjf'
+alias ungz='tar -xvzf'
+
+
+# Extracts any archive(s) (if unp isn't installed)
+extract () {
+	for archive in "$@"; do
+		if [ -f "\$archive" ] ; then
+			case \$archive in
+				\*.tar.bz2)   tar xvjf \$archive    ;;
+				\*.tar.gz)    tar xvzf \$archive    ;;
+				\*.bz2)       bunzip2 \$archive     ;;
+				\*.rar)       rar x \$archive       ;;
+				\*.gz)        gunzip \$archive      ;;
+				\*.tar)       tar xvf \$archive     ;;
+				\*.tbz2)      tar xvjf \$archive    ;;
+				\*.tgz)       tar xvzf \$archive    ;;
+				\*.zip)       unzip \$archive       ;;
+				\*.Z)         uncompress \$archive  ;;
+				\*.7z)        7z x \$archive        ;;
+				\*)           echo "don't know how to extract '\$archive'..." ;;
+			esac
+		else
+			echo "'\$archive' is not a valid file!"
+		fi
+	done
+}
+
+function used() {
+    du -h "\$1"| tail -1
+}
+function usedm() {
+    du --block-size=1M "\$1" | tail -1
+}
+function usedg() {
+    du --block-size=1G "\$1" | tail -1
+}
+EOF
+fi
+#
+################################################################################
+#
+#reboot
+#
+################################################################################
