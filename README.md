@@ -11,7 +11,8 @@ My simple Proxmox setup script for Dev Proxmox servers.
  - Install some extra useful commands
  - Enable IOMMU
  - Add some handy aliases
- 
+ - [PHPSYSINFO](https://phpsysinfo.github.io/phpsysinfo/) on port 80 (HTTP)
+
 ## Installation ##
 
 From a `root` shell run the following command...
