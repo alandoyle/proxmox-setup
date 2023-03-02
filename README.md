@@ -6,7 +6,6 @@ My simple Proxmox setup script for Dev Proxmox servers.
  - Disable Enterprise Repository
  - Enable "No subscription" Repository
  - Disable "Subscription Nag"
- - Add Edge Kernel
  - Update firmware to latest available
  - Install some extra useful commands
  - Enable IOMMU
