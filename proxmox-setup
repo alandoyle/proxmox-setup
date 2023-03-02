@@ -54,7 +54,7 @@ fi
 #
 if [ ! -f /usr/bin/lsscsi ] ; then
     echo "Adding additional applications"
-    apt-get -y install vim aptitude lsscsi git curl gnupg hddtemp p7zip p7zip-full unrar-free &>/dev/null
+    apt-get -y install vim aptitude lsscsi git curl gnupg hddtemp p7zip p7zip-full unrar-free lm-sensors &>/dev/null
     if [ ! -f /usr/bin/btop ] ; then
         wget http://ftp.uk.debian.org/debian/pool/main/b/btop/btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
         if [ -f btop_1.2.7-1~bpo11+1_amd64.deb ] ; then
@@ -205,6 +205,55 @@ function usedg() {
     du --block-size=1G "\$1" | tail -1
 }
 EOF
+fi
+#
+################################################################################
+#
+if [ ! -d /var/www/phpsysinfo ] ; then
+    echo "Adding PHPSYSINFO to port 80"
+    apt -y install nginx-core php-fpm php-xml &>/dev/null
+    rm -f /etc/nginx/sites-enabled/default &>/dev/null
+    cat <<EOF >>/etc/nginx/sites-available/phpsysinfo
+##
+#
+# nginx config for phpsysinfo
+#
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    root /var/www/phpsysinfo;
+    index index.php;
+    server_name _;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+    }
+}
+EOF
+    ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
+    cd /var/www
+    git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
+    cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
+    #
+    # Update settings
+    #
+    sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev"\' /var/www/phpsysinfo/phpsysinfo.ini
+    #
+    chmod u+s /usr/sbin/hddtemp
+    #
+    # Restart nginx
+    #
+    service nginx restart
 fi
 #
 ################################################################################
