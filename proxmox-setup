@@ -130,7 +130,8 @@ grep dfspace /root/.bashrc &>/dev/null 2>&1
 if [ $? -ne 0 ] ; then
     cat <<EOF >>/root/.bashrc
 
-alias dfspace="df -h -x udev -x tmpfs -x cgmfs -x snap"alias pg="less"
+alias dfspace="'df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs"
+alias pg="less"
 alias cls="clear"
 
 # Change directory aliases
