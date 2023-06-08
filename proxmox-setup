@@ -345,6 +345,8 @@ service nginx restart
 #
 exit 0
 FEOF
+chmod a+x /usr/local/bin/setup-https-redirect
+/usr/local/bin/setup-https-redirect
 #
 ################################################################################
 #
