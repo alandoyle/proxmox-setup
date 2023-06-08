@@ -2,7 +2,7 @@
 #
 # My Proxmox setup script
 # 
-# Copyright (C) 2022 Alan Doyle
+# Copyright (C) 2022-2023 Alan Doyle
 #
 # https://github.com/alandoyle/proxmox-setup/
 #
@@ -126,11 +126,13 @@ fi
 #
 ################################################################################
 #
-grep dfspace /root/.bashrc &>/dev/null 2>&1
+grep bash.aliases /root/.bashrc &>/dev/null 2>&1
 if [ $? -ne 0 ] ; then
-    cat <<EOF >>/root/.bashrc
+    echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" >> /root/.bashrc
+fi
+cat <<EOF >/etc/bash.aliases
 
-alias dfspace="'df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs"
+alias dfspace="df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs -x fuse"
 alias pg="less"
 alias cls="clear"
 
@@ -206,7 +208,6 @@ function usedg() {
     du --block-size=1G "\$1" | tail -1
 }
 EOF
-fi
 #
 ################################################################################
 #
@@ -256,6 +257,94 @@ EOF
     #
     service nginx restart
 fi
+#
+#
+#
+echo "Creating optional 'setup-https-redirect' script."
+echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more information."
+cat <<FEOF >/usr/local/bin/setup-https-redirect
+#!/bin/bash
+#
+# Setup an HTTPS redirect on 443.
+#
+DHPARAM_BITS=4096
+[ ! -f /etc/default/dhparam ] && echo "DHPARAM_BITS=4096" > /etc/default/dhparam
+. /etc/default/dhparam
+#
+# Check we have a dhparam file.
+#
+if [ ! -f /etc/ssl/dhparam.pem ] ; then
+    echo "Generating \${DHPARAM_BITS} bit dhparam.pem file"
+    openssl dhparam -out /etc/ssl/dhparam.pem \${DHPARAM_BITS}
+fi
+#
+# Work out which cert/key files to use.
+#
+CERT_FILE=/etc/pve/local/pve-ssl.pem
+CERT_KEY_FILE=/etc/pve/local/pve-ssl.key
+if [ -f /etc/pve/local/pveproxy-ssl.pem ] ; then
+    CERT_FILE=/etc/pve/local/pveproxy-ssl.pem
+    CERT_KEY_FILE=/etc/pve/local/pveproxy-ssl.key
+fi
+#
+# Generate nginx SSL configuration file.
+#
+mkdir -p /etc/nginx/ssl
+cat <<EOF >/etc/nginx/ssl/pve.conf
+# Global SSL configuration
+#ssl on;
+ssl_certificate \${CERT_FILE};
+ssl_certificate_key \${CERT_KEY_FILE};
+ssl_dhparam /etc/ssl/dhparam.pem;
+
+
+# Security (Prevent POODLE & co.)
+ssl_prefer_server_ciphers on;
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256';
+ssl_ecdh_curve secp384r1; # Requires nginx >= 1.1.0
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+add_header X-Frame-Options SAMEORIGIN;
+add_header X-Content-Type-Options nosniff;
+
+ssl_session_timeout 1d;
+ssl_session_cache shared:SSL:50m;
+ssl_session_tickets on;
+
+ssl_stapling on;
+ssl_stapling_verify on;
+resolver 8.8.4.4 8.8.8.8 valid=300s;
+resolver_timeout 10s;
+
+gzip off;
+EOF
+#
+# Generate nginx Site configuration file
+#
+HOSTNAME=\`hostname -f\`
+cat <<EOF >/etc/nginx/sites-available/pve
+server {
+
+    listen 443 ssl http2;
+    server_name \${HOSTNAME};
+
+    root /var/www/html;
+
+    include ssl/pve.conf;
+
+    return 301 https://\${HOSTNAME}:8006\$request_uri;
+}
+EOF
+ln -sf /etc/nginx/sites-available/pve /etc/nginx/sites-enabled/pve
+#
+# Restart nginx
+#
+service nginx restart
+#
+# Finished
+#
+exit 0
+FEOF
 #
 ################################################################################
 #
