@@ -20,20 +20,32 @@ fi
 #
 ################################################################################
 #
-# Setup repositories
+# Include OS details
 #
-echo "Disabling Enterprise Repository"
-sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/pve-enterprise.list
+. /etc/os-release
 #
 ################################################################################
 #
-echo "Setup PVE7 Sources"
+# Setup repositories
+#
+echo "Disabling Enterprise Repositories"
+sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/pve-enterprise.list
+if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
+	cat <<EOF >/etc/apt/sources.list.d/ceph.list
+# deb http://download.proxmox.com/debian/ceph-quincy bookworm enterprise
+deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
+EOF
+fi
+#
+################################################################################
+#
+echo "Setup PVE Sources"
 cat <<EOF >/etc/apt/sources.list
-deb http://ftp.debian.org/debian bullseye main contrib
-deb http://ftp.debian.org/debian bullseye-updates main contrib
-deb http://security.debian.org/debian-security bullseye-security main contrib
-deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription
-# deb http://download.proxmox.com/debian/pve bullseye pvetest
+deb http://ftp.debian.org/debian ${VERSION_CODENAME} main contrib
+deb http://ftp.debian.org/debian ${VERSION_CODENAME}-updates main contrib
+deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib
+deb http://download.proxmox.com/debian/pve ${VERSION_CODENAME} pve-no-subscription
+# deb http://download.proxmox.com/debian/pve ${VERSION_CODENAME} pvetest
 EOF
 #
 ################################################################################
@@ -47,20 +59,29 @@ apt-get -y dist-upgrade &>/dev/null
 if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
     echo "Disable Subscription Nag"
     echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
-    apt --reinstall install proxmox-widget-toolkit &>/dev/null
+	
+    apt-get --reinstall install proxmox-widget-toolkit &>/dev/null
 fi
 #
 ################################################################################
 #
 if [ ! -f /usr/bin/lsscsi ] ; then
     echo "Adding additional applications"
-    apt-get -y install vim aptitude lsscsi git curl gnupg hddtemp p7zip p7zip-full unrar-free lm-sensors &>/dev/null
-    if [ ! -f /usr/bin/btop ] ; then
+    apt-get -y install vim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors &>/dev/null
+    if [ "${VERSION_CODENAME}" != "bookworm" ] ; then
         wget http://ftp.uk.debian.org/debian/pool/main/b/btop/btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
         if [ -f btop_1.2.7-1~bpo11+1_amd64.deb ] ; then
             dpkg -i btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
             rm btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
         fi
+		apt-get install hddtemp &>/dev/null
+	else
+        wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+        if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
+            dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+            rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+        fi
+		apt-get install btop &>/dev/null
     fi
 fi
 if [ !  -f /etc/vim/vimrc.local ] ; then
@@ -213,7 +234,7 @@ EOF
 #
 if [ ! -d /var/www/phpsysinfo ] ; then
     echo "Adding PHPSYSINFO to port 80"
-    apt -y install nginx-core php-fpm php-xml &>/dev/null
+    apt-get -y install nginx-core php-fpm php-xml &>/dev/null
     rm -f /etc/nginx/sites-enabled/default &>/dev/null
     cat <<EOF >>/etc/nginx/sites-available/phpsysinfo
 ##
@@ -267,8 +288,8 @@ cat <<FEOF >/usr/local/bin/setup-https-redirect
 #
 # Setup an HTTPS redirect on 443.
 #
-DHPARAM_BITS=4096
-[ ! -f /etc/default/dhparam ] && echo "DHPARAM_BITS=4096" > /etc/default/dhparam
+DHPARAM_BITS=2048
+[ ! -f /etc/default/dhparam ] && echo "DHPARAM_BITS=2048" > /etc/default/dhparam
 . /etc/default/dhparam
 #
 # Check we have a dhparam file.
@@ -347,12 +368,13 @@ exit 0
 FEOF
 chmod a+x /usr/local/bin/setup-https-redirect
 /usr/local/bin/setup-https-redirect
+systemctl enable nginx &>/dev/null
 #
 ################################################################################
 #
-read -r -p "Reboot Proxmox VE 7 now? <y/N> " prompt
+read -r -p "Reboot Proxmox VE now? <y/N> " prompt
 if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
-    echo "Rebooting Proxmox VE 7"
+    echo "Rebooting Proxmox VE"
     reboot
 fi
 #
