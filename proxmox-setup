@@ -23,6 +23,8 @@ fi
 # Include OS details
 #
 . /etc/os-release
+PVEVERSION=`pveversion|cut -d/ -f2`
+echo "Setting up Proxmox ${PVEVERSION}"
 #
 ################################################################################
 #
@@ -65,25 +67,41 @@ fi
 #
 ################################################################################
 #
-if [ ! -f /usr/bin/lsscsi ] ; then
-    echo "Adding additional applications"
-    apt-get -y install vim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors &>/dev/null
-    if [ "${VERSION_CODENAME}" != "bookworm" ] ; then
-        wget http://ftp.uk.debian.org/debian/pool/main/b/btop/btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
-        if [ -f btop_1.2.7-1~bpo11+1_amd64.deb ] ; then
-            dpkg -i btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
-            rm btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
-        fi
-		apt-get install hddtemp &>/dev/null
-	else
-        wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-        if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
-            dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-            rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-        fi
-		apt-get install btop &>/dev/null
-    fi
+echo "Adding additional applications"
+apt-get -y install vim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors neofetch zip unzip &>/dev/null
+#
+################################################################################
+#
+echo "Adding verion specific applications"
+if [ "${VERSION_CODENAME}" != "bookworm" ] ; then
+	echo "Installing Proxmox 7.x applications"
+	if [ ! -f /usr/bin/btop ] ; then
+		wget http://ftp.uk.debian.org/debian/pool/main/b/btop/btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
+		if [ -f btop_1.2.7-1~bpo11+1_amd64.deb ] ; then
+			dpkg -i btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
+			rm btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
+		fi
+	fi
+	if [ ! -f /usr/sbin/hddtemp ] ; then
+		apt-get -y install hddtemp &>/dev/null
+	fi
+else
+	echo "Installing Proxmox 8.x applications"
+	if [ ! -f /usr/bin/btop ] ; then
+		apt-get -y install btop &>/dev/null
+	fi
+	if [ ! -f /usr/sbin/hddtemp ] ; then
+		wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+		if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
+			dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+			rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+		fi
+	fi
 fi
+#
+################################################################################
+#
+echo "Configuring applications"
 if [ !  -f /etc/vim/vimrc.local ] ; then
     cat <<EOF >/etc/vim/vimrc.local
 if filereadable("\$VIMRUNTIME/defaults.vim")
@@ -148,9 +166,12 @@ fi
 ################################################################################
 #
 grep bash.aliases /root/.bashrc &>/dev/null 2>&1
-if [ $? -ne 0 ] ; then
-    echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" >> /root/.bashrc
+if [ $? -eq 0 ] ; then
+	# Remove old modifications
+    cat /root/.bashrc | grep -v bash.aliases > /root/.bashrc.$$
+	mv /root/.bashrc.$$ /root/.bashrc
 fi
+echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" > /etc/profile.d/aliases.sh
 cat <<EOF >/etc/bash.aliases
 
 alias dfspace="df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs -x fuse"
@@ -232,6 +253,10 @@ EOF
 #
 ################################################################################
 #
+echo -e "clear\nneofetch" > /etc/profile.d/neofetch.sh
+#
+################################################################################
+#
 if [ ! -d /var/www/phpsysinfo ] ; then
     echo "Adding PHPSYSINFO to port 80"
     apt-get -y install nginx-core php-fpm php-xml &>/dev/null
@@ -282,7 +307,6 @@ fi
 ################################################################################
 #
 echo "Creating optional 'setup-https-redirect' script."
-echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more information."
 cat <<FEOF >/usr/local/bin/setup-https-redirect
 #!/bin/bash
 #
@@ -403,7 +427,9 @@ service pvenginx restart
 exit 0
 FEOF
 chmod a+x /usr/local/bin/setup-https-redirect
-/usr/local/bin/setup-https-redirect
+echo "Setting up base HTTPS redirect, this will need to be re-run if you add ACME certificates to node."
+echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more information."
+/usr/local/bin/setup-https-redirect &>/dev/null
 #
 ################################################################################
 #
@@ -411,9 +437,9 @@ chmod a+x /usr/local/bin/setup-https-redirect
 #
 ################################################################################
 #
-read -r -p "Reboot Proxmox VE now? <y/N> " prompt
+read -r -p "Reboot Proxmox VE ${PVEVERSION} now? <y/N> " prompt
 if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
-    echo "Rebooting Proxmox VE"
+    echo "Rebooting Proxmox VE ${PVEVERSION}"
     reboot
 fi
 #
