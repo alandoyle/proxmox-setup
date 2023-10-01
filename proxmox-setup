@@ -399,7 +399,7 @@ server {
     }
 
     location /pve {
-        return 302 https://$host:8006;
+        return 302 https://\$host:8006;
     }
 
     location ~ \.php\$ {
