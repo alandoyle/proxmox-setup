@@ -381,6 +381,7 @@ echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more in
 ################################################################################
 #
 echo "Installing PHPSYSINFO on port 443 (HTTPS)"
+rm -f /etc/nginx/sites-available/phpsysinfo &>/dev/null 2>&1
 cat <<EOF >/etc/nginx/sites-available/phpsysinfo
 ##
 #
@@ -413,7 +414,6 @@ ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo 
 if [ ! -d /var/www/phpsysinfo/.git ] ; then
     git pull &>/dev/null
 fi
-
 if [ ! -d /var/www/phpsysinfo ] ; then
     cd /var/www
     git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
