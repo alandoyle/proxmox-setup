@@ -259,9 +259,8 @@ echo -e "clear\nneofetch" > /etc/profile.d/neofetch.sh
 #
 ################################################################################
 #
-    echo "Installing 'nginx'."
-    apt-get -y install nginx-core php-fpm php-xml &>/dev/null
-    rm -f /etc/nginx/sites-enabled/default &>/dev/null
+echo "Installing 'nginx'."
+apt-get -y install nginx-core php-fpm php-xml &>/dev/null
 #
 ################################################################################
 #
@@ -381,9 +380,8 @@ echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more in
 #
 ################################################################################
 #
-if [ ! -d /var/www/phpsysinfo ] ; then
-    echo "Installing PHPSYSINFO on port 443 (HTTPS)"
-    cat <<EOF >>/etc/nginx/sites-available/phpsysinfo
+echo "Installing PHPSYSINFO on port 443 (HTTPS)"
+cat <<EOF >>/etc/nginx/sites-available/phpsysinfo
 ##
 #
 # nginx config for phpsysinfo
@@ -410,24 +408,26 @@ server {
     }
 }
 EOF
-    ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
+rm /etc/nginx/sites-enabled/* &>/dev/null 2>&1
+ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
+if [ ! -d /var/www/phpsysinfo ] ; then
     cd /var/www
     git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
-    cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
-    #
-    # Update settings
-    #
-    sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SHOW_CPULIST_EXPANDED=true\SHOW_CPULIST_EXPANDED=false\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev,fuse"\' /var/www/phpsysinfo/phpsysinfo.ini
-    #
-    # Restart nginx
-    #
-    service pvenginx restart
 fi
+cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
+#
+# Update settings
+#
+sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SHOW_CPULIST_EXPANDED=true\SHOW_CPULIST_EXPANDED=false\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev,fuse"\' /var/www/phpsysinfo/phpsysinfo.ini
+#
+# Restart nginx
+#
+service pvenginx restart
 #
 ################################################################################
 #
