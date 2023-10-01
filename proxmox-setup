@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # My Proxmox setup script
-# 
+#
 # Copyright (C) 2022-2023 Alan Doyle
 #
 # https://github.com/alandoyle/proxmox-setup/
@@ -61,7 +61,7 @@ apt-get -y dist-upgrade &>/dev/null
 if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
     echo "Disable Subscription Nag"
     echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
-	
+
     apt-get --reinstall install proxmox-widget-toolkit &>/dev/null
 fi
 #
@@ -99,6 +99,8 @@ else
 	fi
 fi
 #
+chmod u+s /usr/sbin/hddtemp
+#
 ################################################################################
 #
 echo "Configuring applications"
@@ -109,7 +111,7 @@ if filereadable("\$VIMRUNTIME/defaults.vim")
 endif
 " now set the line that the defaults file is not reloaded afterwards!
 let skip_defaults_vim = 1
-" turn of mouse
+" turn off mouse
 set mouse=
 " other override settings go here
 syntax on
@@ -257,60 +259,24 @@ echo -e "clear\nneofetch" > /etc/profile.d/neofetch.sh
 #
 ################################################################################
 #
-if [ ! -d /var/www/phpsysinfo ] ; then
-    echo "Adding PHPSYSINFO to port 80"
+    echo "Installing 'nginx'."
     apt-get -y install nginx-core php-fpm php-xml &>/dev/null
     rm -f /etc/nginx/sites-enabled/default &>/dev/null
-    cat <<EOF >>/etc/nginx/sites-available/phpsysinfo
-##
-#
-# nginx config for phpsysinfo
-#
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-
-    root /var/www/phpsysinfo;
-    index index.php;
-    server_name _;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-
-    location ~ \.php\$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php-fpm.sock;
-    }
-}
-EOF
-    ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
-    cd /var/www
-    git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
-    cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
-    #
-    # Update settings
-    #
-    sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
-    sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev"\' /var/www/phpsysinfo/phpsysinfo.ini
-    #
-    chmod u+s /usr/sbin/hddtemp
-    #
-    # Restart nginx
-    #
-    service nginx restart
-fi
 #
 ################################################################################
 #
-echo "Creating optional 'setup-https-redirect' script."
-cat <<FEOF >/usr/local/bin/setup-https-redirect
+echo "Creating 'setup-https' script."
+#
+# Remove old script
+#
+[ -f /usr/local/bin/setup-https-redirect ] && rm -f /usr/local/bin/setup-https-redirect
+#
+# Create new script
+#
+cat <<FEOF >/usr/local/bin/setup-https
 #!/bin/bash
 #
-# Setup an HTTPS redirect on 443.
+# Setup an HTTPS on 443.
 #
 DHPARAM_BITS=2048
 [ ! -f /etc/default/dhparam ] && echo "DHPARAM_BITS=2048" > /etc/default/dhparam
@@ -364,24 +330,6 @@ resolver_timeout 10s;
 gzip off;
 EOF
 #
-# Generate nginx Site configuration file
-#
-HOSTNAME=\`hostname -f\`
-cat <<EOF >/etc/nginx/sites-available/pve
-server {
-
-    listen 443 ssl http2;
-    server_name \${HOSTNAME};
-
-    root /var/www/html;
-
-    include ssl/pve.conf;
-
-    return 301 https://\${HOSTNAME}:8006\$request_uri;
-}
-EOF
-ln -sf /etc/nginx/sites-available/pve /etc/nginx/sites-enabled/pve
-#
 # Reconfigure nginx
 #
 service nginx stop
@@ -426,10 +374,60 @@ service pvenginx restart
 #
 exit 0
 FEOF
-chmod a+x /usr/local/bin/setup-https-redirect
-echo "Setting up base HTTPS redirect, this will need to be re-run if you add ACME certificates to node."
+chmod a+x /usr/local/bin/setup-https
+echo "Setting up HTTPS, this will need to be re-run if you add ACME certificates to node."
 echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more information."
-/usr/local/bin/setup-https-redirect &>/dev/null
+/usr/local/bin/setup-https &>/dev/null
+#
+################################################################################
+#
+if [ ! -d /var/www/phpsysinfo ] ; then
+    echo "Installing PHPSYSINFO on port 443 (HTTPS)"
+    cat <<EOF >>/etc/nginx/sites-available/phpsysinfo
+##
+#
+# nginx config for phpsysinfo
+#
+server {
+    listen 443 ssl http2 default_server;
+    include ssl/pve.conf;
+
+    root /var/www/phpsysinfo;
+    index index.php;
+    server_name _;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location /pve {
+        return 302 https://$host:8006;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+    }
+}
+EOF
+    ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
+    cd /var/www
+    git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
+    cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
+    #
+    # Update settings
+    #
+    sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SHOW_CPULIST_EXPANDED=true\SHOW_CPULIST_EXPANDED=false\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
+    sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev,fuse"\' /var/www/phpsysinfo/phpsysinfo.ini
+    #
+    # Restart nginx
+    #
+    service pvenginx restart
+fi
 #
 ################################################################################
 #
