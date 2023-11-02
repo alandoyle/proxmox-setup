@@ -184,9 +184,9 @@ fi
 #
 grep bash.aliases /root/.bashrc &>/dev/null 2>&1
 if [ $? -eq 0 ] ; then
-	# Remove old modifications
-    cat /root/.bashrc | grep -v bash.aliases > /root/.bashrc.$$
-	mv /root/.bashrc.$$ /root/.bashrc
+    # Remove old modifications
+    cat /root/.bashrc | grep -v 'bash\.aliases' > /root/.bashrc.$$
+    mv /root/.bashrc.$$ /root/.bashrc
 fi
 echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" > /etc/profile.d/aliases.sh
 cat <<EOF >/etc/bash.aliases
