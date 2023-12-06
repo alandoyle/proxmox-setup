@@ -452,11 +452,15 @@ service pvenginx restart
 ################################################################################
 #
 echo "Installing 'spectre-meltdown-checker' to /usr/local/bin"
-cd /usr/share/
-git clone https://github.com/speed47/spectre-meltdown-checker spectre-meltdown-checker &>/dev/null
+if [ ! -d /usr/share/spectre-meltdown-checker ] ; then
+    git clone https://github.com/speed47/spectre-meltdown-checker /usr/share/spectre-meltdown-checker &>/dev/null
+else
+    cd /usr/share/spectre-meltdown-checker
+    git pull  &>/dev/null
+fi
 chmod a+x /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh
+[ -f /usr/local/bin/spectre-meltdown-checker ] && rm /usr/local/bin/spectre-meltdown-checker
 ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/local/bin/spectre-meltdown-checker
-cd /root
 #
 ################################################################################
 #
