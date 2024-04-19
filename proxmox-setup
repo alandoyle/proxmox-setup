@@ -76,7 +76,7 @@ fi
 ################################################################################
 #
 echo "Adding additional applications"
-apt-get -y install vim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors neofetch zip unzip &>/dev/null
+apt-get -y install vim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors neofetch zip unzip grub-efi-amd64 &>/dev/null
 CPU_VENDOR=`cat /proc/cpuinfo | grep vendor_id | uniq | awk -F: '{ print $2 }' | tr -d "[:blank:]"`
 CPU_MICROCODE=
 case $CPU_VENDOR in
