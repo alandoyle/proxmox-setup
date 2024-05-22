@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# My Proxmox setup script
+# My Proxmox 8.x setup script
 #
 # Copyright (C) 2022-2024 Alan Doyle
 #
@@ -9,6 +9,8 @@
 # License: MIT
 # Based in part on some scripts from https://github.com/tteck/Proxmox/
 #
+################################################################################
+. /etc/os-release
 ################################################################################
 #
 # Root check
@@ -20,9 +22,27 @@ fi
 #
 ################################################################################
 #
+# Check it's actually a Proxmox server
+#
+type pveversion >/dev/null 2>&1
+if [ $? -ne 0 ] ; then
+    echo "ERROR: This script needs to be run on a Proxmox Host Server only."
+    exit 98
+fi
+#
+################################################################################
+#
+# Check versions
+#
+if [ "${ID}" != "debian" -a $VERSION_ID -lt 12 ] ; then
+    echo "ERROR: This script needs to be run on Proxmox 8.x"
+    exit 97
+fi
+#
+################################################################################
+#
 # Include OS details
 #
-. /etc/os-release
 PVEVERSION=`pveversion|cut -d/ -f2`
 echo "Setting up Proxmox ${PVEVERSION}"
 #
@@ -42,15 +62,13 @@ fi
 ################################################################################
 #
 echo "Setup PVE Sources"
-NON_FREE_FIRMWARE=non-free-firmware
-[ "${VERSION_CODENAME}" = "bullseye" ] && NON_FREE_FIRMWARE=
 cat <<EOF >/etc/apt/sources.list
 # Debian repositories
-deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free ${NON_FREE_FIRMWARE}
-deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free ${NON_FREE_FIRMWARE}
+deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free non-free-firmware
 
 # security updates
-deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free ${NON_FREE_FIRMWARE}
+deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free non-free-firmware
 
 # Proxmox repositories
 deb http://download.proxmox.com/debian/pve ${VERSION_CODENAME} pve-no-subscription
@@ -80,7 +98,6 @@ GRUBEFI=
 if [ -f /boot/efi/EFI/proxmox/grubx64.efi ] ; then
     GRUBEFI=grub-efi-amd64
 fi
-apt-get -y install vim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors neofetch zip unzip ${GRUBEFI} &>/dev/null
  
 CPU_VENDOR=`cat /proc/cpuinfo | grep vendor_id | uniq | awk -F: '{ print $2 }' | tr -d "[:blank:]"`
 CPU_MICROCODE=
@@ -88,42 +105,56 @@ case $CPU_VENDOR in
     GenuineIntel)  CPU_MICROCODE=intel-microcode ;;
     AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
 esac
-[ ! -z ${CPU_MICROCODE} ] && apt-get -y install ${CPU_MICROCODE} &>/dev/null
+
+apt-get -y install neovim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors neofetch zip unzip btop exa iotop nala plocate rsync powertop command-not-found ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
 #
 ################################################################################
 #
-echo "Adding verion specific applications"
-if [ "${VERSION_CODENAME}" != "bookworm" ] ; then
-	echo "Installing Proxmox 7.x applications"
-	if [ ! -f /usr/bin/btop ] ; then
-		wget http://ftp.uk.debian.org/debian/pool/main/b/btop/btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
-		if [ -f btop_1.2.7-1~bpo11+1_amd64.deb ] ; then
-			dpkg -i btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
-			rm btop_1.2.7-1~bpo11+1_amd64.deb &>/dev/null
-		fi
-	fi
-	if [ ! -f /usr/sbin/hddtemp ] ; then
-		apt-get -y install hddtemp &>/dev/null
-	fi
-else
-	echo "Installing Proxmox 8.x applications"
-	if [ ! -f /usr/bin/btop ] ; then
-		apt-get -y install btop &>/dev/null
-	fi
-	if [ ! -f /usr/sbin/hddtemp ] ; then
-		wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-		if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
-			dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-			rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-		fi
-	fi
+echo "Adding non-repository applications"
+if [ ! -f /usr/sbin/hddtemp ] ; then
+    wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+    if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
+        dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+        rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+    fi
 fi
-#
+
 chmod u+s /usr/sbin/hddtemp
 #
 ################################################################################
 #
 echo "Configuring applications"
+apt-file update &>/dev/null
+update-command-not-found &>/dev/null
+if [ !  -f /etc/skel/.config/nvim/init.vim ] ; then
+	[ ! -d /etc/skel/.config/nvim ] && mkdir -p /etc/skel/.config/nvim
+	cat <<EOF >/etc/skel/.config/nvim/init.vim
+set nocompatible            " disable compatibility to old-time vi
+set showmatch               " show matching
+set ignorecase              " case insensitive
+" set mouse=v                 " middle-click paste with
+set hlsearch                " highlight search
+set incsearch               " incremental search
+set tabstop=4               " number of columns occupied by a tab
+set softtabstop=4           " see multiple spaces as tabstops so <BS> does the right thing
+set expandtab               " converts tabs to white space
+set shiftwidth=4            " width for autoindents
+set autoindent              " indent a new line the same amount as the line just typed
+" set number                  " add line numbers
+set wildmode=longest,list   " get bash-like tab completions
+" set cc=80                   " set an 80 column border for good coding style
+filetype plugin indent on   "allow auto-indenting depending on file type
+syntax on                   " syntax highlighting
+" set mouse=a                 " enable mouse click
+set clipboard=unnamedplus   " using system clipboard
+filetype plugin on
+" set cursorline              " highlight current cursorline
+set ttyfast                 " Speed up scrolling in Vim
+" set spell                 " enable spell check (may need to download language package)
+" set noswapfile            " disable creating swap file
+" set backupdir=~/.cache/vim " Directory to store backup files.
+EOF
+fi
 if [ !  -f /etc/vim/vimrc.local ] ; then
     cat <<EOF >/etc/vim/vimrc.local
 if filereadable("\$VIMRUNTIME/defaults.vim")
@@ -137,6 +168,274 @@ set mouse=
 syntax on
 EOF
 fi
+update-alternatives --set vi /usr/bin/nvim >/dev/null
+update-alternatives --set vim /usr/bin/nvim >/dev/null
+update-alternatives --set view /usr/libexec/neovim/view >/dev/null
+#
+################################################################################
+#
+echo "Creating STARSHIP profiles"
+cat <<EOF >/etc/starship.toml
+# Simple starship.toml file
+format = """
+[ ](bg:#3B4252)\\
+\$username\\
+\$hostname\\
+\$shell\\
+[](fg:#3B4252 bg:#4C566A)\\
+\$directory\\
+[](fg:#4C566A bg:#86BBD8)\\
+\$git_branch\\
+\$git_commit\\
+\$git_status\\
+\$git_state\\
+[](fg:#86BBD8)\\
+\$sudo\\
+\$nix_shell\\
+\$cmd_duration\\
+\$line_break\\
+\$jobs\\
+\$character\\
+"""
+command_timeout = 5000
+add_newline = true
+
+[username]
+style_user = "white"
+format = '[\$user](\$style bg:#3B4252)'
+
+[hostname]
+style = "bg:#3B4252"
+format = "[@\$hostname ](\$style)"
+
+[shell]
+disabled = false
+bash_indicator = ">_ "
+fish_indicator = "><>"
+zsh_indicator = "%_ "
+powershell_indicator = ">>>"
+cmd_indicator = "<<<"
+unknown_indicator = "?_ "
+style = "bg:#3B4252"
+format = "[\$indicator](\$style)"
+
+[directory]
+truncation_length = 5
+style = "bg:#4C566A"
+format = "[ \$path ](\$style)"
+
+[git_branch]
+style = "bg:#86BBD8 fg:#3B4252"
+format = '[ \$symbol$branch ](\$style)'
+
+[git_commit]
+style = "bg:#86BBD8 fg:#3B4252"
+format = '[ \$hash ](\$style)'
+
+[git_status]
+style = "bg:#86BBD8 fg:#3B4252"
+format = '[\$all_status\$ahead_behind](\$style)'
+
+[git_state]
+style = "bg:#86BBD8 fg:#3B4252"
+format = '[ \$state(\$progress_current/\$progress_total)](\$style)'
+
+[sudo]
+allow_windows = true
+disabled = false
+symbol = '!'
+style = 'bold green'
+format = '[ \$symbol](\$style)'
+
+[nix_shell]
+impure_msg = '[❄️](bold blue)'
+pure_msg = '[❄️](bold green)'
+unknown_msg = '[❄️](bold yellow)'
+format = ' \$state'
+
+[cmd_duration]
+min_time = 500
+style = "fg:#eb7442"
+format = " took [\$duration](\$style)"
+
+[line_break]
+
+[jobs]
+
+[character]
+success_symbol = '[-](bold green)'
+# would be nice to have sudo module ehre
+error_symbol = '[✕](bold red)'
+vimcmd_symbol = '[N](bold blue) '
+vimcmd_replace_one_symbol = '[R](bold red) '
+vimcmd_replace_symbol = '[R](bold red) '
+vimcmd_visual_symbol = "[V ](bold yellow)"
+EOF
+cat <<EOF >/etc/starship.root.toml
+# Simple starship.toml file
+format = """
+[ ](bg:#5B0000)\\
+\$username\\
+\$hostname\\
+\$shell\\
+[](fg:#5B0000 bg:#A9191C)\\
+\$directory\\
+[](fg:#A9191C bg:#FF3535)\\
+\$git_branch\\
+\$git_commit\\
+\$git_status\\
+\$git_state\\
+[](fg:#FF3535)\\
+\$sudo\\
+\$nix_shell\\
+\$cmd_duration\\
+\$line_break\\
+\$jobs\\
+\$character\\
+"""
+command_timeout = 5000
+add_newline = true
+
+[username]
+style_user = "white"
+format = '[\$user](\$style bg:#5B0000)'
+
+[hostname]
+style = "bg:#5B0000"
+format = "[@\$hostname ](\$style)"
+
+[shell]
+disabled = false
+bash_indicator = ">_ "
+fish_indicator = "><>"
+zsh_indicator = "%_ "
+powershell_indicator = ">>>"
+cmd_indicator = "<<<"
+unknown_indicator = "?_ "
+style = "bg:#5B0000"
+format = "[\$indicator](\$style)"
+
+[directory]
+truncation_length = 5
+style = "bg:#A9191C"
+format = "[ \$path ](\$style)"
+
+[git_branch]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[ \$symbol\$branch ](\$style)'
+
+[git_commit]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[ \$hash ](\$style)'
+
+[git_status]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[\$all_status\$ahead_behind](\$style)'
+
+[git_state]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[ \$state(\$progress_current/\$progress_total)](\$style)'
+
+[sudo]
+allow_windows = true
+disabled = false
+symbol = '!'
+style = 'bold red'
+format = '[ \$symbol](\$style)'
+
+[nix_shell]
+impure_msg = '[❄️](bold blue)'
+pure_msg = '[❄️](bold green)'
+unknown_msg = '[❄️](bold yellow)'
+format = ' \$state'
+
+[cmd_duration]
+min_time = 500
+style = "fg:#eb7442"
+format = " took [\$duration](\$style)"
+
+[line_break]
+
+[jobs]
+
+[character]
+success_symbol = '[-](bold green)'
+# would be nice to have sudo module here
+error_symbol = '[✕](bold red)'
+vimcmd_symbol = '[N](bold blue) '
+vimcmd_replace_one_symbol = '[R](bold red) '
+vimcmd_replace_symbol = '[R](bold red) '
+vimcmd_visual_symbol = "[V ](bold yellow)"
+EOF
+
+# Update /etc/skel
+[ ! -d /etc/skel/.config ] && mkdir -p /etc/skel/.config
+[ -f /etc/skel/.config/starship.toml ] && rm -f /etc/skel/.config/starship.toml
+ln -sf /etc/starship.toml /etc/skel/.config/starship.toml
+#
+################################################################################
+#
+
+echo "Installing STARSHIP (`uname -m`)"
+STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
+if [ "`uname -m`" = "aarch64" ] ; then
+	STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-aarch64-unknown-linux-musl.tar.gz
+fi
+curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
+tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
+[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
+mv starship /usr/local/bin/starship
+chown root:root /usr/local/bin/starship
+rm -f /tmp/starship.tar.gz
+#
+################################################################################
+#
+echo "Updating BASH profile"
+
+# NeoVIM
+cat <<EOF >/etc/profile.d/neovim.sh
+if [ ! -f ~/.config/nvim/init.vim ] ; then
+	[ ! -d ~/.config/nvim ] && mkdir -p ~/.config/nvim
+	cp /etc/skel/.config/nvim/init.vim ~/.config/nvim
+fi
+EOF
+
+# Neofetch
+[ -f /etc/profile.d/neofetch.sh ] && rm /etc/profile.d/neofetch.sh
+cat <<EOF >/etc/profile.d/sysinfo.sh
+if [ "\${SUDO_USER}" = "" ] ; then
+	clear
+	neofetch
+fi
+EOF
+
+# Terminal
+cat <<EOF >/etc/profile.d/term.sh
+if [ -z \${SSH_TTY} ] ; then
+	export TERM=linux
+fi
+EOF
+
+# Quoting Style
+echo "export QUOTING_STYLE=literal" > /etc/profile.d/quoting_style.sh
+
+# Starship
+cat <<EOF >/etc/profile.d/starship.sh
+if [ -f /usr/local/bin/starship ] ; then
+	[ ! -d ~/.config ] && mkdir -p ~/.config
+	[ -f ~/.config/starship.toml ] && rm -f ~/.config/starship.toml
+	if [ \`id -u\` -eq 0 ] ; then
+		ln -sf /etc/starship.root.toml ~/.config/starship.toml
+	else
+		ln -sf /etc/starship.toml ~/.config/starship.toml
+	fi
+	eval "\$(starship init bash)"
+fi
+EOF
+
+# Update /root/.bashrc
+echo "Updating /root/.bashrc"
+echo -e "#\n# PROFILE UPDATE\nps -p 2 >/dev/null # LXD Container check\nif [ \$? -ne 0 -o \"\${SUDO_USER}\" != \"\" ] ; then\n\t. /root/.bash_aliases\nfi" >> /root/.bashrc
 #
 ################################################################################
 #
@@ -162,7 +461,7 @@ if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
     [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
     cat <<EOF >/etc/default/grub.d/iommu.cfg
 # Enable IOMMU
-GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt \${GRUB_CMDLINE_LINUX_DEFAULT}"
+GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt pcie_acs_override=downstream,multifunction \${GRUB_CMDLINE_LINUX_DEFAULT}"
 EOF
     cat <<EOF >>/etc/modules
 vfio
@@ -187,47 +486,45 @@ fi
 #
 ################################################################################
 #
-grep bash.aliases /root/.bashrc &>/dev/null 2>&1
-if [ $? -eq 0 ] ; then
-    # Remove old modifications
-    cat /root/.bashrc | grep -v 'bash\.aliases' > /root/.bashrc.$$
-    mv /root/.bashrc.$$ /root/.bashrc
-fi
 echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" > /etc/profile.d/aliases.sh
 cat <<EOF >/etc/bash.aliases
 
-alias dfspace="df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs -x fuse"
-alias pg="less"
-alias cls="clear"
+alias dfspace='df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs -x fuse -x overlay -x efivarfs'
+alias pg='less'
+alias cls='clear'
+alias btop='btop --utf-force'
+alias goroot='sudo -s'
+alias go64='sudo -s'
 
 # Change directory aliases
 alias home='cd ~'
 alias cd..='cd ..'
 
 # cd into the old directory
-alias bd='cd "$OLDPWD"'
+alias bd='cd "\$OLDPWD"'
 
 # Remove a directory and all files
 alias rmd='/bin/rm  --recursive --force --verbose '
 
 # Alias's for multiple directory listing commands
-alias la='ls -Alh' # show hidden files
-alias lf='ls -aFh --color=always' # add colors and file type extensions
-alias lx='ls -lXBh' # sort by extension
-alias lk='ls -lSrh' # sort by size
-alias lc='ls -lcrh' # sort by change time
-alias lu='ls -lurh' # sort by access time
-alias lr='ls -lRh' # recursive ls
-alias lt='ls -ltrh' # sort by date
-alias lm='ls -alh |more' # pipe through 'more'
-alias lw='ls -xAh' # wide listing format
-alias ll='ls -Fls' # long listing format
-alias labc='ls -lap' #alphabetical sort
-alias lf="ls -l | egrep -v '^d'" # files only
-alias ldir="ls -l | egrep '^d'" # directories only
+alias ls='exa -H --group-directories-first'
+alias la='exa -alh' # show hidden files
+alias lf='exa -aFh --color=always' # add colors and file type extensions
+alias lx='exa -l --sort=ext' # sort by extension
+alias lk='exa -l --sort=size' # sort by size
+alias lc='exa -l --sort=mod' # sort by modified time
+alias lu='exa -l --sort=acc' # sort by access time
+alias lr='exa -lR' # recursive ls
+alias lt='exa -l --sort=new' # sort by date
+alias lm='exa -al |more' # pipe through 'more'
+alias lw='exa -xa' # wide listing format
+alias ll='exa -alF --group-directories-first' # long listing format
+alias labc='exa -l --sort=name' #alphabetical sort
+alias lff="exa -l | egrep -v '^d'" # files only
+alias ldir="exa -l | egrep '^d'" # directories only
 
 # Search command line history
-alias h="history | grep "
+alias h='history | grep '
 
 # Alias's for archives
 alias mktar='tar -cvf'
@@ -236,7 +533,6 @@ alias mkgz='tar -cvzf'
 alias untar='tar -xvf'
 alias unbz2='tar -xvjf'
 alias ungz='tar -xvzf'
-
 
 # Extracts any archive(s) (if unp isn't installed)
 extract () {
@@ -262,6 +558,7 @@ extract () {
 	done
 }
 
+# Disk usage support
 function used() {
     du -h "\$1"| tail -1
 }
@@ -271,12 +568,57 @@ function usedm() {
 function usedg() {
     du --block-size=1G "\$1" | tail -1
 }
+
+# sudo quick shortcuts
+alias reboot='sudo /usr/sbin/reboot'
+alias su-vi='sudo vi'
+alias su-nano='sudo nano'
+alias su-rm='sudo rm'
+alias su-cp='sudo cp'
+alias su-mv='sudo mv'
+alias su-md='sudo mkdir -p'
+alias dmesg='sudo /usr/bin/dmesg'
+alias mount='sudo /usr/bin/mount'
+alias umount='sudo /usr/bin/umount'
+alias iotop='sudo /usr/sbin/iotop'
+alias apt='sudo nala'
+alias powertop='sudo /usr/sbin/powertop'
+alias systemctl='sudo /usr/bin/systemctl'
+
 EOF
+
+# Create a new .bash_aliases for root
+cat <<EOF >/root/.bash_aliases
+ps -p 2 >/dev/null # LXD Container check
+if [ \$? -ne 0 -o "\${SUDO_USER}" != "" ] ; then
+	. /etc/profile
+fi
+EOF
+
 #
 ################################################################################
 #
-echo -e "clear\nneofetch" > /etc/profile.d/neofetch.sh
-touch /root/.hushlogin
+if [ ! -f /var/lib/plocate/plocate.db ] ; then
+	echo "Updating plocate.db"
+	updatedb
+fi
+#
+################################################################################
+#
+USERHOMEDIR=`grep ${SUDO_USER} /etc/passwd|cut -d: -f6`
+if [ ! -z ${USERHOMEDIR} -a ! -f ${USERHOMEDIR}/.hushlogin ] ; then
+	echo "Setting .hushlogin for ${SUDO_USER} (${USERHOMEDIR})"
+	touch ${USERHOMEDIR}/.hushlogin
+	chown ${SUDO_USER}:${SUDO_USER} ${USERHOMEDIR}/.hushlogin
+fi
+if [ ! -f /root/.hushlogin ] ; then
+	echo "Setting root .hushlogin"
+	touch /root/.hushlogin
+fi
+if [ ! -f /etc/skel/.hushlogin ] ; then
+	echo "Setting default .hushlogin"
+	touch /etc/skel/.hushlogin
+fi
 #
 ################################################################################
 #
