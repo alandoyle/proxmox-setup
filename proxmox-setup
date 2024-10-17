@@ -428,7 +428,7 @@ EOF
 cat <<EOF >/etc/profile.d/sysinfo.sh
 if [ "\${SUDO_USER}" = "" ] ; then
     clear
-    fastfetch
+    fastfetch -l pve
     if [ -f /usr/bin/incus ] ; then
         echo -e "\n\tINCUS CONTAINERS"
         incus ls -cns4
