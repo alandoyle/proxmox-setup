@@ -3,6 +3,8 @@ My simple Proxmox setup script for Dev Proxmox servers.
 
 ## Features ##
 
+ - Supports Proxmox 8.2 or higher
+ - Supports Proxmox Backup Server 3.2 or higher
  - Disable Enterprise Repository
  - Enable "No subscription" Repository
  - Disable "Subscription Nag"
@@ -11,7 +13,7 @@ My simple Proxmox setup script for Dev Proxmox servers.
  - Enable IOMMU
  - Add some handy aliases
  - [PHPSYSINFO](https://phpsysinfo.github.io/phpsysinfo/) on port 443 (HTTPS)
- - Add `setup-https` script.
+ - Add `setup-https` script to reconfigure PHPSYSINFO if an ACME cert is installed.
 
 ## Installation ##
 

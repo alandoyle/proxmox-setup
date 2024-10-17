@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# My Proxmox 8.x setup script
+# My Proxmox VE 8.2+/Proxmox Backup Server 3.2+ setup script
 #
 # Copyright (C) 2022-2024 Alan Doyle
 #
@@ -11,6 +11,20 @@
 #
 ################################################################################
 . /etc/os-release
+################################################################################
+get_proxmox_version()
+{
+    if [ -f /usr/bin/pveversion ] ; then
+        PROXMOX_VERSION="Proxmox VE `/usr/bin/pveversion|cut -d/ -f2`"
+        PROXMOX_TYPE=pve
+    elif [ -f /usr/sbin/proxmox-backup-manager ] ; then
+        PROXMOX_VERSION="Proxmox Backup Server `/usr/sbin/proxmox-backup-manager versions | cut -d ' ' -f5`"
+        PROXMOX_TYPE=pbs
+    else
+        PROXMOX_VERSION="UNKNOWN!!!!"
+        PROXMOX_TYPE=unknown
+    fi
+}
 ################################################################################
 #
 # Root check
@@ -24,8 +38,7 @@ fi
 #
 # Check it's actually a Proxmox server
 #
-type pveversion >/dev/null 2>&1
-if [ $? -ne 0 ] ; then
+if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
     echo "ERROR: This script needs to be run on a Proxmox Host Server only."
     exit 98
 fi
@@ -35,7 +48,7 @@ fi
 # Check versions
 #
 if [ "${ID}" != "debian" -a $VERSION_ID -lt 12 ] ; then
-    echo "ERROR: This script needs to be run on Proxmox 8.x"
+    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox backup Server 3.2 (or higher)"
     exit 97
 fi
 #
@@ -43,17 +56,19 @@ fi
 #
 # Include OS details
 #
-PVEVERSION=`pveversion|cut -d/ -f2`
-echo "Setting up Proxmox ${PVEVERSION}"
+get_proxmox_version
+echo "Setting up ${PROXMOX_VERSION}"
 #
 ################################################################################
 #
 # Setup repositories
 #
 echo "Disabling Enterprise Repositories"
-sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/pve-enterprise.list
+if [ -f /etc/apt/sources.list.d/p${PROXMOX_TYPE}-enterprise.list ] ; then
+    sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list
+fi
 if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
-	cat <<EOF >/etc/apt/sources.list.d/ceph.list
+    cat <<EOF >/etc/apt/sources.list.d/ceph.list
 # deb http://download.proxmox.com/debian/ceph-quincy bookworm enterprise
 deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
 EOF
@@ -61,18 +76,18 @@ fi
 #
 ################################################################################
 #
-echo "Setup PVE Sources"
+echo "Setup APT Sources"
 cat <<EOF >/etc/apt/sources.list
 # Debian repositories
 deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free non-free-firmware
 
-# security updates
+# Security updates
 deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free non-free-firmware
 
 # Proxmox repositories
-deb http://download.proxmox.com/debian/pve ${VERSION_CODENAME} pve-no-subscription
-# deb http://download.proxmox.com/debian/pve ${VERSION_CODENAME} pvetest
+deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}-no-subscription
+# deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}test
 
 EOF
 #
@@ -98,7 +113,7 @@ GRUBEFI=
 if [ -f /boot/efi/EFI/proxmox/grubx64.efi ] ; then
     GRUBEFI=grub-efi-amd64
 fi
- 
+
 CPU_VENDOR=`cat /proc/cpuinfo | grep vendor_id | uniq | awk -F: '{ print $2 }' | tr -d "[:blank:]"`
 CPU_MICROCODE=
 case $CPU_VENDOR in
@@ -122,6 +137,14 @@ fi
 chmod u+s /usr/sbin/hddtemp
 #
 ################################################################################
+#
+echo "Installing FASTFETCH (`uname -m`)"
+FASTFETCH_URL=https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-amd64.deb
+curl --fail --silent --location --output /tmp/fastfetch-linux.deb "${FASTFETCH_URL}"
+dpkg -i /tmp/fastfetch-linux.deb &>/dev/null
+[ -f /tmp/fastfetch-linux.deb ] && rm /tmp/fastfetch-linux.deb 2>/dev/null
+#
+#################################################################################
 #
 echo "Configuring applications"
 apt-file update &>/dev/null
@@ -404,10 +427,34 @@ EOF
 [ -f /etc/profile.d/neofetch.sh ] && rm /etc/profile.d/neofetch.sh
 cat <<EOF >/etc/profile.d/sysinfo.sh
 if [ "\${SUDO_USER}" = "" ] ; then
-	clear
-	neofetch
+    clear
+    fastfetch
+    if [ -f /usr/bin/incus ] ; then
+        echo -e "\n\tINCUS CONTAINERS"
+        incus ls -cns4
+    fi
+    if [ -f /usr/bin/docker ] ; then
+        echo -e "\n\tDOCKER CONTAINERS\n-------------------------------------------------------------------------------"
+        docker ps --format "table {{.Names}}\t{{.State}}\t{{.Status}}\t{{.Ports}}"
+    fi
+    if [ -f /usr/sbin/pct ] ; then
+        echo -e "\n\tLXC CONTAINERS\n-------------------------------------------------------------------------------"
+        sudo /usr/sbin/pct list
+    fi
+    if [ -f  /usr/sbin/qm ] ; then
+        echo -e "\n\tKVM MACHINES\n-------------------------------------------------------------------------------"
+        sudo /usr/sbin/qm list
+    fi
 fi
 EOF
+
+# Proxmox VE specific aliases
+if [ "${PROXMOX_TYPE}" = "pve" ] ; then
+    cat <<EOF >/etc/profile.d/proxmox.sh
+alias lsct='sudo /usr/sbin/pct list'
+alias lsvm='sudo /usr/sbin/qm list'
+EOF
+fi
 
 # Terminal
 cat <<EOF >/etc/profile.d/term.sh
@@ -421,7 +468,10 @@ echo "export QUOTING_STYLE=literal" > /etc/profile.d/quoting_style.sh
 
 # Starship
 cat <<EOF >/etc/profile.d/starship.sh
-if [ -f /usr/local/bin/starship ] ; then
+tty | grep tty >/dev/null
+
+# Only display for remote connections
+if [ -f /usr/local/bin/starship -a \$? -ne 0 ] ; then
 	[ ! -d ~/.config ] && mkdir -p ~/.config
 	[ -f ~/.config/starship.toml ] && rm -f ~/.config/starship.toml
 	if [ \`id -u\` -eq 0 ] ; then
@@ -559,15 +609,9 @@ extract () {
 }
 
 # Disk usage support
-function used() {
-    du -h "\$1"| tail -1
-}
-function usedm() {
-    du --block-size=1M "\$1" | tail -1
-}
-function usedg() {
-    du --block-size=1G "\$1" | tail -1
-}
+alias used='du -sh'
+alias usedm='du -s --block-size=1M'
+alias usedg='du -s --block-size=1G'
 
 # sudo quick shortcuts
 alias reboot='sudo /usr/sbin/reboot'
