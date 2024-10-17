@@ -859,9 +859,10 @@ ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/local
 #
 ################################################################################
 #
-read -r -p "Reboot Proxmox VE ${PVEVERSION} now? <y/N> " prompt
+get_proxmox_version
+read -r -p "Reboot ${PROXMOX_VERSION} now? <y/N> " prompt
 if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
-    echo "Rebooting Proxmox VE ${PVEVERSION}"
+    echo "Rebooting ${PROXMOX_VERSION}"
     reboot
 fi
 #
