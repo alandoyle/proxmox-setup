@@ -17,9 +17,15 @@ get_proxmox_version()
     if [ -f /usr/bin/pveversion ] ; then
         PROXMOX_VERSION="Proxmox VE `/usr/bin/pveversion|cut -d/ -f2`"
         PROXMOX_TYPE=pve
+        STARSHIP_COLOR1=#3B4252
+        STARSHIP_COLOR2=#4C566A
+        STARSHIP_COLOR3=#86BBD8
     elif [ -f /usr/sbin/proxmox-backup-manager ] ; then
         PROXMOX_VERSION="Proxmox Backup Server `/usr/sbin/proxmox-backup-manager versions | cut -d ' ' -f5`"
         PROXMOX_TYPE=pbs
+        STARSHIP_COLOR1=#3B5242
+        STARSHIP_COLOR2=#4C6A56
+        STARSHIP_COLOR3=#86D9BA
     else
         PROXMOX_VERSION="UNKNOWN!!!!"
         PROXMOX_TYPE=unknown
@@ -197,27 +203,38 @@ update-alternatives --set view /usr/libexec/neovim/view >/dev/null
 #
 ################################################################################
 #
+echo "Installing STARSHIP (`uname -m`)"
+STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
+if [ "`uname -m`" = "aarch64" ] ; then
+	STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-aarch64-unknown-linux-musl.tar.gz
+fi
+curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
+tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
+[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
+mv starship /usr/local/bin/starship
+chown root:root /usr/local/bin/starship
+rm -f /tmp/starship.tar.gz
+#
+################################################################################
+#
 echo "Creating STARSHIP profiles"
 cat <<EOF >/etc/starship.toml
 # Simple starship.toml file
 format = """
-[ ](bg:#3B4252)\\
+[ ](bg:${STARSHIP_COLOR1})\\
 \$username\\
 \$hostname\\
 \$shell\\
-[](fg:#3B4252 bg:#4C566A)\\
+[](fg:${STARSHIP_COLOR1} bg:${STARSHIP_COLOR2})\\
 \$directory\\
-[](fg:#4C566A bg:#86BBD8)\\
+[](fg:${STARSHIP_COLOR2} bg:${STARSHIP_COLOR3})\\
 \$git_branch\\
 \$git_commit\\
 \$git_status\\
 \$git_state\\
-[](fg:#86BBD8)\\
-\$sudo\\
-\$nix_shell\\
+[](fg:${STARSHIP_COLOR3})\\
 \$cmd_duration\\
 \$line_break\\
-\$jobs\\
 \$character\\
 """
 command_timeout = 5000
@@ -225,10 +242,10 @@ add_newline = true
 
 [username]
 style_user = "white"
-format = '[\$user](\$style bg:#3B4252)'
+format = '[\$user](\$style bg:${STARSHIP_COLOR1})'
 
 [hostname]
-style = "bg:#3B4252"
+style = "bg:${STARSHIP_COLOR1}"
 format = "[@\$hostname ](\$style)"
 
 [shell]
@@ -239,42 +256,29 @@ zsh_indicator = "%_ "
 powershell_indicator = ">>>"
 cmd_indicator = "<<<"
 unknown_indicator = "?_ "
-style = "bg:#3B4252"
+style = "bg:${STARSHIP_COLOR1}"
 format = "[\$indicator](\$style)"
 
 [directory]
 truncation_length = 5
-style = "bg:#4C566A"
+style = "bg:${STARSHIP_COLOR2}"
 format = "[ \$path ](\$style)"
 
 [git_branch]
-style = "bg:#86BBD8 fg:#3B4252"
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
 format = '[ \$symbol$branch ](\$style)'
 
 [git_commit]
-style = "bg:#86BBD8 fg:#3B4252"
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
 format = '[ \$hash ](\$style)'
 
 [git_status]
-style = "bg:#86BBD8 fg:#3B4252"
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
 format = '[\$all_status\$ahead_behind](\$style)'
 
 [git_state]
-style = "bg:#86BBD8 fg:#3B4252"
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
 format = '[ \$state(\$progress_current/\$progress_total)](\$style)'
-
-[sudo]
-allow_windows = true
-disabled = false
-symbol = '!'
-style = 'bold green'
-format = '[ \$symbol](\$style)'
-
-[nix_shell]
-impure_msg = '[❄️](bold blue)'
-pure_msg = '[❄️](bold green)'
-unknown_msg = '[❄️](bold yellow)'
-format = ' \$state'
 
 [cmd_duration]
 min_time = 500
@@ -282,8 +286,6 @@ style = "fg:#eb7442"
 format = " took [\$duration](\$style)"
 
 [line_break]
-
-[jobs]
 
 [character]
 success_symbol = '[-](bold green)'
@@ -309,11 +311,8 @@ format = """
 \$git_status\\
 \$git_state\\
 [](fg:#FF3535)\\
-\$sudo\\
-\$nix_shell\\
 \$cmd_duration\\
 \$line_break\\
-\$jobs\\
 \$character\\
 """
 command_timeout = 5000
@@ -359,27 +358,12 @@ format = '[\$all_status\$ahead_behind](\$style)'
 style = "bg:#FF3535 fg:#5B0000"
 format = '[ \$state(\$progress_current/\$progress_total)](\$style)'
 
-[sudo]
-allow_windows = true
-disabled = false
-symbol = '!'
-style = 'bold red'
-format = '[ \$symbol](\$style)'
-
-[nix_shell]
-impure_msg = '[❄️](bold blue)'
-pure_msg = '[❄️](bold green)'
-unknown_msg = '[❄️](bold yellow)'
-format = ' \$state'
-
 [cmd_duration]
 min_time = 500
 style = "fg:#eb7442"
 format = " took [\$duration](\$style)"
 
 [line_break]
-
-[jobs]
 
 [character]
 success_symbol = '[-](bold green)'
@@ -395,21 +379,6 @@ EOF
 [ ! -d /etc/skel/.config ] && mkdir -p /etc/skel/.config
 [ -f /etc/skel/.config/starship.toml ] && rm -f /etc/skel/.config/starship.toml
 ln -sf /etc/starship.toml /etc/skel/.config/starship.toml
-#
-################################################################################
-#
-
-echo "Installing STARSHIP (`uname -m`)"
-STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
-if [ "`uname -m`" = "aarch64" ] ; then
-	STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-aarch64-unknown-linux-musl.tar.gz
-fi
-curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
-tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
-[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
-mv starship /usr/local/bin/starship
-chown root:root /usr/local/bin/starship
-rm -f /tmp/starship.tar.gz
 #
 ################################################################################
 #
@@ -453,6 +422,15 @@ if [ "${PROXMOX_TYPE}" = "pve" ] ; then
     cat <<EOF >/etc/profile.d/proxmox.sh
 alias lsct='sudo /usr/sbin/pct list'
 alias lsvm='sudo /usr/sbin/qm list'
+EOF
+fi
+
+# Add Storage path (if available)
+if [ "${PROXMOX_TYPE}" = "pve" ] ; then
+    cat <<EOF >/etc/profile.d/storage-path.sh
+if [ -d /Storage/bin ] ; then
+    export PATH=\$PATH:/Storage/bin
+fi
 EOF
 fi
 
