@@ -70,7 +70,7 @@ echo "Setting up ${PROXMOX_VERSION}"
 # Setup repositories
 #
 echo "Disabling Enterprise Repositories"
-if [ -f /etc/apt/sources.list.d/p${PROXMOX_TYPE}-enterprise.list ] ; then
+if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list ] ; then
     sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list
 fi
 if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
