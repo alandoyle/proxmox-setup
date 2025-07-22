@@ -2,7 +2,7 @@
 #
 # My Proxmox VE 8.2+/Proxmox Backup Server 3.2+ setup script
 #
-# Copyright (C) 2022-2024 Alan Doyle
+# Copyright (C) 2022-2025 Alan Doyle
 #
 # https://github.com/alandoyle/proxmox-setup/
 #
@@ -10,6 +10,7 @@
 # Based in part on some scripts from https://github.com/tteck/Proxmox/
 #
 ################################################################################
+VERSION_ID="1"
 . /etc/os-release
 ################################################################################
 get_proxmox_version()
@@ -45,7 +46,7 @@ fi
 # Check it's actually a Proxmox server
 #
 if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
-    echo "ERROR: This script needs to be run on a Proxmox Host Server only."
+    echo "ERROR: This script needs to be run on a Proxmox Server only."
     exit 98
 fi
 #
@@ -53,7 +54,7 @@ fi
 #
 # Check versions
 #
-if [ "${ID}" != "debian" -a $VERSION_ID -lt 12 ] ; then
+if [ "${ID}" != "debian" -a ${VERSION_ID} -lt 12 ] ; then
     echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox backup Server 3.2 (or higher)"
     exit 97
 fi
@@ -127,7 +128,7 @@ case $CPU_VENDOR in
     AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
 esac
 
-apt-get -y install sudo neovim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors neofetch zip unzip btop exa iotop nala plocate rsync powertop command-not-found ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
+apt-get -y install sudo neovim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors zip unzip btop exa iotop nala plocate rsync powertop command-not-found lshw ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
 #
 ################################################################################
 #
@@ -489,7 +490,10 @@ if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
     [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
     cat <<EOF >/etc/default/grub.d/iommu.cfg
 # Enable IOMMU
-GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt pcie_acs_override=downstream,multifunction \${GRUB_CMDLINE_LINUX_DEFAULT}"
+GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt \${GRUB_CMDLINE_LINUX_DEFAULT}"
+#
+# NOTE: Only enable the following line IF there are problems with PCI passthru
+# GRUB_CMDLINE_LINUX_DEFAULT="pcie_acs_override=downstream,multifunction \${GRUB_CMDLINE_LINUX_DEFAULT}"
 EOF
     cat <<EOF >>/etc/modules
 vfio
@@ -553,6 +557,9 @@ alias ldir="exa -l | egrep '^d'" # directories only
 
 # Search command line history
 alias h='history | grep '
+
+# Hardware info
+alias meminfo='sudo lshw -short -C memory'
 
 # Alias's for archives
 alias mktar='tar -cvf'

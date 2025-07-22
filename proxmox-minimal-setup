@@ -1,0 +1,186 @@
+#!/bin/bash
+#
+# Minimal Proxmox VE 8.2+/Proxmox Backup Server 3.2+ setup script
+#
+# Copyright (C) 2022-2025 Alan Doyle
+#
+# https://github.com/alandoyle/proxmox-setup/
+#
+# License: MIT
+# Based in part on some scripts from https://github.com/tteck/Proxmox/
+#
+################################################################################
+VERSION_ID="1"
+. /etc/os-release
+################################################################################
+get_proxmox_version()
+{
+    if [ -f /usr/bin/pveversion ] ; then
+        PROXMOX_VERSION="Proxmox VE `/usr/bin/pveversion|cut -d/ -f2`"
+        PROXMOX_TYPE=pve
+    elif [ -f /usr/sbin/proxmox-backup-manager ] ; then
+        PROXMOX_VERSION="Proxmox Backup Server `/usr/sbin/proxmox-backup-manager versions | cut -d ' ' -f5`"
+        PROXMOX_TYPE=pbs
+    else
+        PROXMOX_VERSION="UNKNOWN!!!!"
+        PROXMOX_TYPE=unknown
+    fi
+}
+################################################################################
+#
+# Root check
+#
+if [ `id -u` -ne 0 ] ; then
+    echo "ERROR: This script needs to be run as root or using sudo."
+    exit 99
+fi
+#
+################################################################################
+#
+# Check it's actually a Proxmox server
+#
+if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
+    echo "ERROR: This script needs to be run on a Proxmox Server only."
+    exit 98
+fi
+#
+################################################################################
+#
+# Check versions
+#
+if [ "${ID}" != "debian" -a ${VERSION_ID} -lt 12 ] ; then
+    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox backup Server 3.2 (or higher)"
+    exit 97
+fi
+#
+################################################################################
+#
+# Include OS details
+#
+get_proxmox_version
+echo "Setting up ${PROXMOX_VERSION}"
+#
+################################################################################
+#
+# Setup repositories
+#
+echo "Disabling Enterprise Repositories"
+if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list ] ; then
+    sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list
+fi
+if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
+    cat <<EOF >/etc/apt/sources.list.d/ceph.list
+# deb http://download.proxmox.com/debian/ceph-quincy bookworm enterprise
+deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
+EOF
+fi
+#
+################################################################################
+#
+echo "Setup APT Sources"
+cat <<EOF >/etc/apt/sources.list
+# Debian repositories
+deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free non-free-firmware
+
+# Security updates
+deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free non-free-firmware
+
+# Proxmox repositories
+deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}-no-subscription
+# deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}test
+
+EOF
+#
+################################################################################
+#
+echo "Upgrade Proxmox (please be patient)"
+apt-get update &>/dev/null
+apt-get -y dist-upgrade &>/dev/null
+#
+################################################################################
+#
+if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+    echo "Disable Subscription Nag"
+    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
+
+    apt-get --reinstall install proxmox-widget-toolkit &>/dev/null
+fi
+#
+################################################################################
+#
+echo "Adding additional applications"
+GRUBEFI=
+if [ -f /boot/efi/EFI/proxmox/grubx64.efi ] ; then
+    GRUBEFI=grub-efi-amd64
+fi
+
+CPU_VENDOR=`cat /proc/cpuinfo | grep vendor_id | uniq | awk -F: '{ print $2 }' | tr -d "[:blank:]"`
+CPU_MICROCODE=
+case $CPU_VENDOR in
+    GenuineIntel)  CPU_MICROCODE=intel-microcode ;;
+    AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
+esac
+
+apt-get -y install ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
+#
+################################################################################
+#
+apt-mark hold firmware-linux-free &>/dev/null
+if [ -d /usr/lib/firmware.prev ] ; then
+    echo "Update firmware"
+    cd /usr/lib/firmware
+    git config pull.rebase false
+    git pull &>/dev/null
+else
+    echo "Download firmware"
+    mv /usr/lib/firmware /usr/lib/firmware.prev
+    cd /usr/lib
+    git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git firmware &>/dev/null
+fi
+#
+################################################################################
+#
+if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
+    echo "Enable IOMMU"
+    IOMMU_CPU="amd_iommu=on"
+    dmidecode -s processor-manufacturer | grep Intel &>/dev/null
+    [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
+    cat <<EOF >/etc/default/grub.d/iommu.cfg
+# Enable IOMMU
+GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt \${GRUB_CMDLINE_LINUX_DEFAULT}"
+#
+# NOTE: Only enable the following line IF there are problems with PCI passthru
+# GRUB_CMDLINE_LINUX_DEFAULT="pcie_acs_override=downstream,multifunction \${GRUB_CMDLINE_LINUX_DEFAULT}"
+EOF
+    cat <<EOF >>/etc/modules
+vfio
+vfio_iommu_type1
+vfio_pci
+vfio_virqfd
+EOF
+    update-initramfs -u -k all &>/dev/null
+    update-grub2 &>/dev/null
+fi
+if [ ! -f /usr/local/bin/lsiommu ] ; then
+    cat <<EOF >>/usr/local/bin/lsiommu
+#!/bin/bash
+for d in \$(find /sys/kernel/iommu_groups/ -type l | sort -n -k5 -t/); do
+    n=\${d#*/iommu_groups/*}; n=\${n%%/*}
+    printf '[Group %s] ' "\$n"
+    lspci -nns "\${d##*/}"
+done;
+EOF
+    chmod a+x /usr/local/bin/lsiommu
+fi
+#
+################################################################################
+#
+get_proxmox_version
+read -r -p "Reboot ${PROXMOX_VERSION} now? <y/N> " prompt
+if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
+    echo "Rebooting ${PROXMOX_VERSION}"
+    reboot
+fi
+#
+################################################################################
