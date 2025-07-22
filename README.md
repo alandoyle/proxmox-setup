@@ -19,13 +19,13 @@ My simple Proxmox setup script for Dev Proxmox servers.
 
 From a `root` shell run one of the following commands...
 
-# Full Installation
+### Full Installation
 
 ```
 bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-setup)"
 ```
 
-# Minimal Installation
+### Minimal Installation
 
 ```
 bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-minimal-setup)"
