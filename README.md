@@ -17,12 +17,21 @@ My simple Proxmox setup script for Dev Proxmox servers.
 
 ## Installation ##
 
-From a `root` shell run the following command...
+From a `root` shell run one of the following commands...
+
+# Full Installation
 
 ```
 bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-setup)"
 ```
-## setup-https
+
+# Minimal Installation
+
+```
+bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-minimal-setup)"
+```
+
+## setup-https (Full Installation only)
 
 `setup-https` is a small script used to set up HTTPS on port 443.
 
