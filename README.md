@@ -9,8 +9,11 @@ My simple Proxmox setup script for Dev Proxmox servers.
  - Enable "No subscription" Repository
  - Disable "Subscription Nag"
  - Update firmware to latest available
- - Install some extra useful commands
  - Enable IOMMU
+
+### Full Installation Additional Features
+
+ - Install some extra useful commands
  - Add some handy aliases
  - [PHPSYSINFO](https://phpsysinfo.github.io/phpsysinfo/) on port 443 (HTTPS)
  - Add `setup-https` script to reconfigure PHPSYSINFO if an ACME cert is installed.
