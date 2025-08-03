@@ -48,8 +48,9 @@ fi
 #
 # Check versions
 #
-if [ "${ID}" != "debian" -a ${VERSION_ID} -lt 12 ] ; then
-    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox backup Server 3.2 (or higher)"
+if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 12 -o "${VERSION_CODENAME}" = "trixie" ] ; then
+    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox Backup Server 3.2 (or higher)"
+    echo "NOTE: Neither Proxmox VE 9.x nor Proxmox Backup Server 4.x is currently supported."
     exit 97
 fi
 #
