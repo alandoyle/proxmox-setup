@@ -1,0 +1,192 @@
+#!/bin/bash
+#
+# My Proxmox VE 8.2+/Proxmox Backup Server 3.2+ upgrade script
+#
+# Copyright (C) 2025 Alan Doyle
+#
+# https://github.com/alandoyle/proxmox-setup/
+#
+# License: MIT
+# Based in part on some scripts from https://github.com/tteck/Proxmox/
+#
+################################################################################
+VERSION_ID="1"
+. /etc/os-release
+################################################################################
+get_proxmox_version()
+{
+    if [ -f /usr/bin/pveversion ] ; then
+        PROXMOX_VERSION="Proxmox VE `/usr/bin/pveversion|cut -d/ -f2`"
+        PROXMOX_TYPE=pve
+    elif [ -f /usr/sbin/proxmox-backup-manager ] ; then
+        PROXMOX_VERSION="Proxmox Backup Server `/usr/sbin/proxmox-backup-manager versions | cut -d ' ' -f5`"
+        PROXMOX_TYPE=pbs
+    else
+        PROXMOX_VERSION="UNKNOWN!!!!"
+        PROXMOX_TYPE=unknown
+    fi
+}
+################################################################################
+#
+# Root check
+#
+if [ `id -u` -ne 0 ] ; then
+    echo "ERROR: This script needs to be run as root or using sudo."
+    exit 99
+fi
+#
+################################################################################
+#
+# Check it's actually a Proxmox server
+#
+if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
+    echo "ERROR: This script needs to be run on a Proxmox Server only."
+    exit 98
+fi
+#
+################################################################################
+#
+# Check versions
+#
+if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 12 -o "${VERSION_CODENAME}" = "trixie" ] ; then
+    echo "ERROR: This script needs to be run on Proxmox VE 8.x or Proxmox Backup Server 3.x ONLY"
+    echo "NOTE: Upgrading Proxmox VE 9.x nor Proxmox Backup Server 4.x is currently supported."
+    exit 97
+fi
+#
+################################################################################
+#
+# Update the system to the latest 8.x version.
+#
+echo "Updating system"
+/usr/bin/apt update
+/usr/bin/apt dist-upgrade -y
+/usr/bin/apt autoremove -y
+#
+################################################################################
+#
+# Create default config file if one doesn't exist
+#
+if [ ! -f /etc/default/proxmox-setup ] ; then
+    cat <<EOF >/etc/default/proxmox-setup
+#
+# Set PROXMOX_ENV to LIVE if you have a subscription, otherwise the "No Subscriptions" repos will be enabled.
+#
+PROXMOX_ENV=DEV
+EOF
+fi
+. /etc/default/proxmox-setup
+UPDATE_ENV=Production
+[ "${PROXMOX_ENV}" != "LIVE" ] && UPDATE_ENV=Homelab
+#
+################################################################################
+#
+# Include OS details
+#
+get_proxmox_version
+echo "Upgrading ${PROXMOX_VERSION} to latest v9 [${UPDATE_ENV}]"
+#
+################################################################################
+#
+# Update repositories
+#
+REPO_STATE=
+[ "${PROXMOX_ENV}" != "LIVE" ] && REPO_STATE="Enabled: false"
+#
+# Configure Enterprise Repository
+#
+echo "Creating Enterprise source file"
+cat > /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources << EOF
+Types: deb
+URIs: https://enterprise.proxmox.com/debian/${PROXMOX_TYPE}
+Suites: trixie
+Components: ${PROXMOX_TYPE}-enterprise
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+${REPO_STATE}
+EOF
+#
+# Configure Enterprise Ceph Repository
+#
+echo "Creating Enterprise Ceph source file"
+cat > /etc/apt/sources.list.d/ceph.sources << EOF
+Types: deb
+URIs: https://enterprise.proxmox.com/debian/ceph-squid
+Suites: trixie
+Components: enterprise
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+${REPO_STATE}
+EOF
+#
+# Configure Debian Repositories
+#
+echo "Creating Debian source file"
+cat > /etc/apt/sources.list.d/debian.sources << EOF
+Types: deb
+URIs: http://deb.debian.org/debian/
+Suites: trixie trixie-updates
+Components: main contrib non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.debian.org/debian-security/
+Suites: trixie-security
+Components: main contrib non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+#
+# Configure "No Subscription" Repositories (if necessary)
+#
+if [ "${PROXMOX_ENV}" != "LIVE" ] ; then
+    #
+    # Enable "No Subscription" Repository
+    #
+    echo "Creating No Subscription source file"
+    cat > /etc/apt/sources.list.d/proxmox.sources << EOF
+Types: deb
+URIs: http://download.proxmox.com/debian/${PROXMOX_TYPE}
+Suites: trixie
+Components: ${PROXMOX_TYPE}-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+    #
+    # Enable "No Subscription" Ceph Repository
+    #
+    echo "Creating No Subscription Ceph source file"
+    cat > /etc/apt/sources.list.d/ceph-no-sub.sources << EOF
+Types: deb
+URIs: http://download.proxmox.com/debian/ceph-squid
+Suites: trixie
+Components: no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+fi
+#
+################################################################################
+#
+# Remove old repositories
+#
+echo "Removing old repository files"
+> /etc/apt/sources.list
+rm /etc/apt/sources.list.d/*.list
+#
+################################################################################
+#
+# Update the system to the latest 9.x version.
+#
+echo "Upgrading system"
+/usr/bin/apt update
+/usr/bin/apt dist-upgrade -y
+/usr/bin/apt autoremove -y
+#
+################################################################################
+#
+# Reboot recommended
+#
+get_proxmox_version
+read -r -p "RECOMMENDED: Reboot ${PROXMOX_VERSION} now ? <y/N> " prompt
+if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
+    echo "Rebooting ${PROXMOX_VERSION}"
+    reboot
+fi
+#
+################################################################################
