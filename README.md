@@ -37,7 +37,7 @@ bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxm
 ### Upgrade from Proxmox 8.x 'Bookworm' to 9.x 'Trixie'
 
 ```
-bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-minimal-setup)"
+bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/upgrade-proxmox)"
 ```
 
 
