@@ -406,7 +406,7 @@ echo "Updating BASH profile..."
 cat <<EOF >/etc/profile.d/sysinfo.sh
 if [ "\${SUDO_USER}" = "" ] ; then
     clear
-    fastfetch
+    fastfetch -l pve
     if [ -f /usr/bin/docker ] ; then
         echo -e "\n\tDOCKER CONTAINERS\n-------------------------------------------------------------------------------"
         docker ps --format "table {{.Names}}\t{{.State}}\t{{.Status}}\t{{.Ports}}"|sed 's/stopped/STOPPED/g'|sed 's/running/RUNNING/g'
