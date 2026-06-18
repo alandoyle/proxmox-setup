@@ -18,12 +18,14 @@ get_proxmox_version()
     if [ -f /usr/bin/pveversion ] ; then
         PROXMOX_VERSION="Proxmox VE `/usr/bin/pveversion|cut -d/ -f2`"
         PROXMOX_TYPE=pve
+        PROXMOX_DIR=/etc/pve
         STARSHIP_COLOR1=#3B4252
         STARSHIP_COLOR2=#4C566A
         STARSHIP_COLOR3=#86BBD8
     elif [ -f /usr/sbin/proxmox-backup-manager ] ; then
         PROXMOX_VERSION="Proxmox Backup Server `/usr/sbin/proxmox-backup-manager versions | cut -d ' ' -f5`"
         PROXMOX_TYPE=pbs
+        PROXMOX_DIR=/etc/proxmox-backup
         STARSHIP_COLOR1=#3B5242
         STARSHIP_COLOR2=#4C6A56
         STARSHIP_COLOR3=#86D9BA
@@ -64,7 +66,7 @@ fi
 #
 # Check if already run
 #
-if [ -f /etc/pve/.setup ] ; then
+if [ -f ${PROXMOX_DIR}/.setup ] ; then
     echo "ERROR: This script has already been run."
     exit 96
 fi
@@ -1056,7 +1058,7 @@ ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/bin/s
 #
 ################################################################################################################################################################
 #
-echo "Install date: `date`" > /etc/pve/.setup
+echo "Install date: `date`" > ${PROXMOX_DIR}/.setup
 #
 ################################################################################################################################################################
 #
