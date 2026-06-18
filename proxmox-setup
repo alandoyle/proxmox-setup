@@ -1,18 +1,18 @@
 #!/bin/bash
 #
-# My Proxmox VE 8.2+/Proxmox Backup Server 3.2+ setup script
+# My Proxmox VE 9.0+/Proxmox Backup Server 4.0+ setup script
 #
-# Copyright (C) 2022-2025 Alan Doyle
+# Copyright (C) 2022-2026 Alan Doyle
 #
 # https://github.com/alandoyle/proxmox-setup/
 #
 # License: MIT
-# Based in part on some scripts from https://github.com/tteck/Proxmox/
+# Based originally in part on some scripts from https://github.com/tteck/Proxmox/ and https://github.com/MacRimi/ProxMenux
 #
-################################################################################
+################################################################################################################################################################
 VERSION_ID="1"
 . /etc/os-release
-################################################################################
+################################################################################################################################################################
 get_proxmox_version()
 {
     if [ -f /usr/bin/pveversion ] ; then
@@ -32,7 +32,8 @@ get_proxmox_version()
         PROXMOX_TYPE=unknown
     fi
 }
-################################################################################
+#
+################################################################################################################################################################
 #
 # Root check
 #
@@ -41,7 +42,7 @@ if [ `id -u` -ne 0 ] ; then
     exit 99
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 # Check it's actually a Proxmox server
 #
@@ -50,71 +51,117 @@ if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
     exit 98
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 # Check versions
 #
-if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 12 -o "${VERSION_CODENAME}" = "trixie" ] ; then
-    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox Backup Server 3.2 (or higher)"
-    echo "NOTE: Neither Proxmox VE 9.x nor Proxmox Backup Server 4.x is currently supported."
+if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 13 ] ; then
+    echo "ERROR: This script needs to be run on Proxmox VE 9.x (or higher) or Proxmox Backup Server 4.x (or higher)"
     exit 97
 fi
 #
-################################################################################
+################################################################################################################################################################
+#
+# Check if already run
+#
+if [ -f /etc/pve/.setup ] ; then
+    echo "ERROR: This script has already been run."
+    exit 96
+fi
+#
+################################################################################################################################################################
+#
+# Create default config file if one doesn't exist
+#
+if [ ! -f /etc/default/proxmox-setup ] ; then
+    cat <<EOF >/etc/default/proxmox-setup
+#
+# Set PROXMOX_ENV to LIVE if you have a subscription, otherwise the "No Subscriptions" repos will be enabled.
+#
+PROXMOX_ENV=DEV
+EOF
+fi
+#
+################################################################################################################################################################
 #
 # Include OS details
 #
+[ -f /etc/default/proxmox-setup ] && . /etc/default/proxmox-setup
 get_proxmox_version
-echo "Setting up ${PROXMOX_VERSION}"
+echo "Setting up ${PROXMOX_VERSION} [${PROXMOX_ENV}]"
 #
-################################################################################
+################################################################################################################################################################
 #
 # Setup repositories
 #
-echo "Disabling Enterprise Repositories"
-if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list ] ; then
-    sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list
-fi
-if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
-    cat <<EOF >/etc/apt/sources.list.d/ceph.list
-# deb http://download.proxmox.com/debian/ceph-quincy bookworm enterprise
-deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
+if [ "${PROXMOX_ENV}" != "LIVE" ] ; then
+    echo "Configuring TRIXIE repositories"
+    [ ! -d /etc/apt/sources.list.d.SAVED ] && mkdir -p /etc/apt/sources.list.d.SAVED
+    #
+    ################################################################################################################################################################
+    #
+    echo "Disabling Enterprise Repositories"
+    if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources -a ! -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources.SAVED ] ; then
+        cp /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources /etc/apt/sources.list.d.SAVED
+        grep "Enabled: false" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources >/dev/null
+        if [ $? -ne 0 ] ; then
+            cat /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources | grep -v Enabled > /tmp/${PROXMOX_TYPE}-enterprise.sources
+            echo "Enabled: false" >> /tmp/${PROXMOX_TYPE}-enterprise.sources
+            mv /tmp/${PROXMOX_TYPE}-enterprise.sources /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources
+        fi
+    fi
+    #
+    ################################################################################################################################################################
+    #
+    if [ ! -f /etc/apt/sources.list.d/proxmox.sources ] ; then
+    echo "Creating 'no-subscription' APT source"
+    cat <<EOF >/etc/apt/sources.list.d/proxmox.sources
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
 EOF
+    fi
+    #
+    ################################################################################################################################################################
+    #
+    if [ -f /etc/apt/sources.list.d/ceph.list -a ! -f /etc/apt/sources.list.d/ceph.list.SAVED ] ; then
+        echo "Updating ceph.sources"
+        cp /etc/apt/sources.list.d/ceph.sources /etc/apt/sources.list.d.SAVED
+        grep "Enabled: false" /etc/apt/sources.list.d/ceph.sources >/dev/null
+        if [ $? -ne 0 ] ; then
+            cat /etc/apt/sources.list.d/ceph.sources | grep -v Enabled > /tmp/ceph.sources
+            echo -e "Enabled: false\n" >> /tmp/ceph.sources
+            echo "Types: deb" >> /tmp/ceph.sources
+            echo "URIs: http://download.proxmox.com/debian/ceph-squid" >> /tmp/ceph.sources
+            echo "Suites: trixie" >> /tmp/ceph.sources
+            echo "Components: no-subscription" >> /tmp/ceph.sources
+            echo "Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" >> /tmp/ceph.sources
+            mv /tmp/ceph.sources /etc/apt/sources.list.d/ceph.sources
+        fi
+    fi
 fi
 #
-################################################################################
-#
-echo "Setup APT Sources"
-cat <<EOF >/etc/apt/sources.list
-# Debian repositories
-deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free non-free-firmware
-deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free non-free-firmware
-
-# Security updates
-deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free non-free-firmware
-
-# Proxmox repositories
-deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}-no-subscription
-# deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}test
-
-EOF
-#
-################################################################################
+################################################################################################################################################################
 #
 echo "Upgrade Proxmox (please be patient)"
-apt-get update &>/dev/null
-apt-get -y dist-upgrade &>/dev/null
+apt-get update >/dev/null
+apt-get -y dist-upgrade >/dev/null
 #
-################################################################################
+################################################################################################################################################################
 #
-if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+if [ -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+    rm /etc/apt/apt.conf.d/no-nag-script
+fi
+if [ ! -f /etc/apt/apt.conf.d/99nonagscript ] ; then
     echo "Disable Subscription Nag"
-    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
+    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/99nonagscript
 
-    apt-get --reinstall install proxmox-widget-toolkit &>/dev/null
+    apt-get --reinstall install proxmox-widget-toolkit >/dev/null
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 echo "Adding additional applications"
 GRUBEFI=
@@ -129,64 +176,39 @@ case $CPU_VENDOR in
     AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
 esac
 
-apt-get -y install sudo neovim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors zip unzip btop exa iotop nala plocate rsync powertop command-not-found lshw ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
+apt-get -y install sudo vim aptitude lsscsi git curl gnupg bash-completion logrotate p7zip p7zip-full unrar-free lm-sensors zip unzip btop iotop plocate rsync powertop command-not-found unattended-upgrades fastfetch lshw ${GRUBEFI} ${CPU_MICROCODE} >/dev/null
 #
-################################################################################
+################################################################################################################################################################
 #
 echo "Adding non-repository applications"
 if [ ! -f /usr/sbin/hddtemp ] ; then
-    wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-    if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
-        dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-        rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
-    fi
+    echo "Installing HDDTemp..."
+    HDDTEMP_URL=https://ftp.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb
+    curl --fail --silent --location --output /tmp/hddtemp-linux.deb "${HDDTEMP_URL}"
+    dpkg -i /tmp/hddtemp-linux.deb >/dev/null
+	rm /tmp/hddtemp-linux.deb >/dev/null
 fi
 
 chmod u+s /usr/sbin/hddtemp
 #
-################################################################################
+################################################################################################################################################################
 #
-echo "Installing FASTFETCH (`uname -m`)"
-FASTFETCH_URL=https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-amd64.deb
-curl --fail --silent --location --output /tmp/fastfetch-linux.deb "${FASTFETCH_URL}"
-dpkg -i /tmp/fastfetch-linux.deb &>/dev/null
-[ -f /tmp/fastfetch-linux.deb ] && rm /tmp/fastfetch-linux.deb 2>/dev/null
+echo "Installing STARSHIP"
+STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
+curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
+tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
+[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
+mv starship /usr/bin/starship
+chown root:root /usr/bin/starship
+chmod a+x /usr/bin/starship
+rm -f /tmp/starship.tar.gz
 #
 #################################################################################
 #
-echo "Configuring applications"
-apt-file update &>/dev/null
-update-command-not-found &>/dev/null
-if [ !  -f /etc/skel/.config/nvim/init.vim ] ; then
-	[ ! -d /etc/skel/.config/nvim ] && mkdir -p /etc/skel/.config/nvim
-	cat <<EOF >/etc/skel/.config/nvim/init.vim
-set nocompatible            " disable compatibility to old-time vi
-set showmatch               " show matching
-set ignorecase              " case insensitive
-" set mouse=v                 " middle-click paste with
-set hlsearch                " highlight search
-set incsearch               " incremental search
-set tabstop=4               " number of columns occupied by a tab
-set softtabstop=4           " see multiple spaces as tabstops so <BS> does the right thing
-set expandtab               " converts tabs to white space
-set shiftwidth=4            " width for autoindents
-set autoindent              " indent a new line the same amount as the line just typed
-" set number                  " add line numbers
-set wildmode=longest,list   " get bash-like tab completions
-" set cc=80                   " set an 80 column border for good coding style
-filetype plugin indent on   "allow auto-indenting depending on file type
-syntax on                   " syntax highlighting
-" set mouse=a                 " enable mouse click
-set clipboard=unnamedplus   " using system clipboard
-filetype plugin on
-" set cursorline              " highlight current cursorline
-set ttyfast                 " Speed up scrolling in Vim
-" set spell                 " enable spell check (may need to download language package)
-" set noswapfile            " disable creating swap file
-" set backupdir=~/.cache/vim " Directory to store backup files.
-EOF
-fi
-if [ !  -f /etc/vim/vimrc.local ] ; then
+echo "Configuring applications..."
+apt-file update >/dev/null
+update-command-not-found >/dev/null
+if [ ! -f /etc/vim/vimrc.local -a -d /etc/vim ] ; then
     cat <<EOF >/etc/vim/vimrc.local
 if filereadable("\$VIMRUNTIME/defaults.vim")
   source \$VIMRUNTIME/defaults.vim
@@ -199,27 +221,20 @@ set mouse=
 syntax on
 EOF
 fi
-update-alternatives --set vi /usr/bin/nvim >/dev/null
-update-alternatives --set vim /usr/bin/nvim >/dev/null
-update-alternatives --set view /usr/libexec/neovim/view >/dev/null
-#
-################################################################################
-#
-echo "Installing STARSHIP (`uname -m`)"
-STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
-if [ "`uname -m`" = "aarch64" ] ; then
-	STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-aarch64-unknown-linux-musl.tar.gz
+
+[ ! -d /etc/skel/.config/btop ] && mkdir -p /etc/skel/.config/btop
+if [ ! -f /etc/skel/.config/btop/btop.conf ] ; then
+    echo 'color_theme = "TTY"' > /etc/skel/.config/btop/btop.conf
 fi
-curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
-tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
-[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
-mv starship /usr/local/bin/starship
-chown root:root /usr/local/bin/starship
-rm -f /tmp/starship.tar.gz
+
+[ ! -d /root/.config/btop ] && mkdir -p /root/.config/btop
+if [ ! -f /root/.config/btop/btop.conf ] ; then
+    echo 'color_theme = "TTY"' > /root/.config/btop/btop.conf
+fi
 #
-################################################################################
+################################################################################################################################################################
 #
-echo "Creating STARSHIP profiles"
+echo "Creating STARSHIP profiles..."
 cat <<EOF >/etc/starship.toml
 # Simple starship.toml file
 format = """
@@ -382,59 +397,38 @@ EOF
 [ -f /etc/skel/.config/starship.toml ] && rm -f /etc/skel/.config/starship.toml
 ln -sf /etc/starship.toml /etc/skel/.config/starship.toml
 #
-################################################################################
+################################################################################################################################################################
 #
-echo "Updating BASH profile"
+echo "Updating BASH profile..."
 
-# NeoVIM
-cat <<EOF >/etc/profile.d/neovim.sh
-if [ ! -f ~/.config/nvim/init.vim ] ; then
-	[ ! -d ~/.config/nvim ] && mkdir -p ~/.config/nvim
-	cp /etc/skel/.config/nvim/init.vim ~/.config/nvim
-fi
-EOF
-
-# Neofetch
+# Fastfetch
 [ -f /etc/profile.d/neofetch.sh ] && rm /etc/profile.d/neofetch.sh
 cat <<EOF >/etc/profile.d/sysinfo.sh
 if [ "\${SUDO_USER}" = "" ] ; then
     clear
-    fastfetch -l pve
-    if [ -f /usr/bin/incus ] ; then
-        echo -e "\n\tINCUS CONTAINERS"
-        incus ls -cns4
-    fi
+    fastfetch
     if [ -f /usr/bin/docker ] ; then
         echo -e "\n\tDOCKER CONTAINERS\n-------------------------------------------------------------------------------"
-        docker ps --format "table {{.Names}}\t{{.State}}\t{{.Status}}\t{{.Ports}}"
+        docker ps --format "table {{.Names}}\t{{.State}}\t{{.Status}}\t{{.Ports}}"|sed 's/stopped/STOPPED/g'|sed 's/running/RUNNING/g'
     fi
     if [ -f /usr/sbin/pct ] ; then
         echo -e "\n\tLXC CONTAINERS\n-------------------------------------------------------------------------------"
-        sudo /usr/sbin/pct list
+        sudo /usr/sbin/pct list|sed 's/stopped/STOPPED/g'|sed 's/running/RUNNING/g'
     fi
     if [ -f  /usr/sbin/qm ] ; then
         echo -e "\n\tKVM MACHINES\n-------------------------------------------------------------------------------"
-        sudo /usr/sbin/qm list
+        sudo /usr/sbin/qm list|sed 's/stopped/STOPPED/g'|sed 's/running/RUNNING/g'
     fi
 fi
 EOF
 
-# Proxmox VE specific aliases
-if [ "${PROXMOX_TYPE}" = "pve" ] ; then
-    cat <<EOF >/etc/profile.d/proxmox.sh
-alias lsct='sudo /usr/sbin/pct list'
-alias lsvm='sudo /usr/sbin/qm list'
-EOF
-fi
-
-# Add Storage path (if available)
-if [ "${PROXMOX_TYPE}" = "pve" ] ; then
-    cat <<EOF >/etc/profile.d/storage-path.sh
-if [ -d /Storage/bin ] ; then
-    export PATH=\$PATH:/Storage/bin
+# Reboot Required
+[ -f /etc/profile.d/reboot-required.sh ] && rm -f /etc/profile.d/reboot-required.sh
+cat <<EOF >/etc/profile.d/zzz-reboot-required.sh
+if [ -f /var/run/reboot-required ] ; then
+	tput setaf 1;echo [REBOOT REQUIRED]; tput setaf 7;
 fi
 EOF
-fi
 
 # Terminal
 cat <<EOF >/etc/profile.d/term.sh
@@ -451,7 +445,7 @@ cat <<EOF >/etc/profile.d/starship.sh
 tty | grep tty >/dev/null
 
 # Only display for remote connections
-if [ -f /usr/local/bin/starship -a \$? -ne 0 ] ; then
+if [ -f /usr/bin/starship -a \$? -ne 0 ] ; then
 	[ ! -d ~/.config ] && mkdir -p ~/.config
 	[ -f ~/.config/starship.toml ] && rm -f ~/.config/starship.toml
 	if [ \`id -u\` -eq 0 ] ; then
@@ -463,31 +457,50 @@ if [ -f /usr/local/bin/starship -a \$? -ne 0 ] ; then
 fi
 EOF
 
-# Update /root/.bashrc
-echo "Updating /root/.bashrc"
-echo -e "#\n# PROFILE UPDATE\nps -p 2 >/dev/null # LXD Container check\nif [ \$? -ne 0 -o \"\${SUDO_USER}\" != \"\" ] ; then\n\t. /root/.bash_aliases\nfi" >> /root/.bashrc
-#
-################################################################################
-#
-apt-mark hold firmware-linux-free &>/dev/null
-if [ -d /usr/lib/firmware.prev ] ; then
-    echo "Update firmware"
-    cd /usr/lib/firmware
-    git config pull.rebase false
-    git pull &>/dev/null
-else
-    echo "Download firmware"
-    mv /usr/lib/firmware /usr/lib/firmware.prev
-    cd /usr/lib
-    git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git firmware &>/dev/null
+# Check if we're installing on Debian as it has a different /root/.bashrc to Ubuntu
+grep "PROFILE UPDATE" /root/.bashrc >/dev/null 2>&1
+if [ $? -ne 0 -a "${ID}" = "debian" ] ; then
+	echo "Updating /root/.bashrc"
+	echo -e "#\n# PROFILE UPDATE\nps -p 2 >/dev/null # LXD Container check\nif [ \$? -ne 0 -o \"\${SUDO_USER}\" != \"\" ] ; then\n\t. /root/.bash_aliases\nfi" >> /root/.bashrc
+fi
+
+# Proxmox VE specific aliases
+if [ "${PROXMOX_TYPE}" = "pve" ] ; then
+    cat <<EOF >/etc/profile.d/proxmox.sh
+alias lsct='sudo /usr/sbin/pct list'
+alias ctup='sudo /usr/sbin/pct start'
+alias ctdn='sudo /usr/sbin/pct stop'
+
+alias lsvm='sudo /usr/sbin/qm list'
+alias vmup='sudo /usr/sbin/qm start'
+alias vmdn='sudo /usr/sbin/qm stop'
+EOF
+fi
+
+# Add Storage path (if available)
+if [ "${PROXMOX_TYPE}" = "pve" ] ; then
+    cat <<EOF >/etc/profile.d/storage-path.sh
+if [ -d /Storage/bin ] ; then
+    export PATH=\$PATH:/Storage/bin
+fi
+EOF
 fi
 #
-################################################################################
+################################################################################################################################################################
+#
+if [ -d /usr/lib/firmware.prev ] ; then
+    echo "Update firmware"
+    [ -d /usr/lib/firmware ] && rm -rf /usr/lib/firmware >/dev/null
+    mv /usr/lib/firmware.prev /usr/lib/firmware >/dev/null
+    apt-get -y --reinstall install pve-firmware ${CPU_MICROCODE} >/dev/null
+fi
+#
+################################################################################################################################################################
 #
 if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
     echo "Enable IOMMU"
     IOMMU_CPU="amd_iommu=on"
-    dmidecode -s processor-manufacturer | grep Intel &>/dev/null
+    dmidecode -s processor-manufacturer | grep Intel >/dev/null
     [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
     cat <<EOF >/etc/default/grub.d/iommu.cfg
 # Enable IOMMU
@@ -502,8 +515,8 @@ vfio_iommu_type1
 vfio_pci
 vfio_virqfd
 EOF
-    update-initramfs -u -k all &>/dev/null
-    update-grub2 &>/dev/null
+    update-initramfs -u -k all >/dev/null
+    update-grub2 >/dev/null
 fi
 if [ ! -f /usr/local/bin/lsiommu ] ; then
     cat <<EOF >>/usr/local/bin/lsiommu
@@ -517,12 +530,12 @@ EOF
     chmod a+x /usr/local/bin/lsiommu
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" > /etc/profile.d/aliases.sh
 cat <<EOF >/etc/bash.aliases
 
-alias dfspace='df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs -x fuse -x overlay -x efivarfs'
+alias dfspace='df -hT -x cgmfs -x snap -x devtmpfs -x fuse -x overlay -x efivarfs | egrep -v "shm|run/|/tmp"'
 alias pg='less'
 alias cls='clear'
 alias btop='btop --utf-force'
@@ -540,21 +553,20 @@ alias bd='cd "\$OLDPWD"'
 alias rmd='/bin/rm  --recursive --force --verbose '
 
 # Alias's for multiple directory listing commands
-alias ls='exa -H --group-directories-first'
-alias la='exa -alh' # show hidden files
-alias lf='exa -aFh --color=always' # add colors and file type extensions
-alias lx='exa -l --sort=ext' # sort by extension
-alias lk='exa -l --sort=size' # sort by size
-alias lc='exa -l --sort=mod' # sort by modified time
-alias lu='exa -l --sort=acc' # sort by access time
-alias lr='exa -lR' # recursive ls
-alias lt='exa -l --sort=new' # sort by date
-alias lm='exa -al |more' # pipe through 'more'
-alias lw='exa -xa' # wide listing format
-alias ll='exa -alF --group-directories-first' # long listing format
-alias labc='exa -l --sort=name' #alphabetical sort
-alias lff="exa -l | egrep -v '^d'" # files only
-alias ldir="exa -l | egrep '^d'" # directories only
+alias ls='ls --color=auto'
+alias la='ls -lAh' # show hidden files
+alias lf='ls -aFh' # file type extensions
+alias lx='ls -l --sort=extension' # sort by extension
+alias lk='ls -lSr' # sort by size
+alias lm='ls -lr --sort=time --time=mtime' # sort by modified time
+alias lu='ls -lr --sort=time --time=atime' # sort by access time
+alias lr='ls -lR' # recursive ls
+alias lt='ls -ltr' # sort by date
+alias lw='ls -aC' # wide listing format
+alias ll='ls -alF --group-directories-first' # long listing format
+alias labc='ls -l --sort=name' #alphabetical sort
+alias lff="ls -l | egrep -v '^d'" # files only
+alias ldir="ls -l | egrep '^d'" # directories only
 
 # Search command line history
 alias h='history | grep '
@@ -611,7 +623,7 @@ alias dmesg='sudo /usr/bin/dmesg'
 alias mount='sudo /usr/bin/mount'
 alias umount='sudo /usr/bin/umount'
 alias iotop='sudo /usr/sbin/iotop'
-alias apt='sudo nala'
+alias apt='sudo /usr/bin/apt'
 alias powertop='sudo /usr/sbin/powertop'
 alias systemctl='sudo /usr/bin/systemctl'
 
@@ -624,16 +636,402 @@ if [ \$? -ne 0 -o "\${SUDO_USER}" != "" ] ; then
 	. /etc/profile
 fi
 EOF
-
 #
 ################################################################################
+#
+echo "Configuring APT..."
+
+if [ ! -f /etc/apt/apt.conf.d/99disable-translations ] ; then
+	echo 'Acquire::Languages "none";' > /etc/apt/apt.conf.d/99disable-translations
+fi
+
+if [ ! -f /etc/apt/apt.conf.d/99force-ipv4 ] ; then
+	echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
+fi
+
+if [ ! -f /etc/apt/apt.conf.d/99autoclean-interval ] ; then
+	echo 'APT::Periodic::AutocleanInterval "7";' > /etc/apt/apt.conf.d/99autoclean-interval
+fi
+
+if [ ! -f /etc/apt/apt.conf.d/99download-update-interval ] ; then
+	echo 'APT::Periodic::Download-Upgradeable-Packages "1";' > /etc/apt/apt.conf.d/99download-update-interval
+fi
+
+if [ ! -f /etc/apt/apt.conf.d/99unattended-upgrades ] ; then
+	cat > /etc/apt/apt.conf.d/99unattended-upgrades << EOF
+// Unattended-Upgrade::Origins-Pattern controls which packages are
+// upgraded.
+//
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename},label=Debian-Security";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+
+// Remove unused automatically installed kernel-related packages
+// (kernel images, kernel headers and kernel version locked tools).
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+
+// Do automatic removal of newly unused dependencies after the upgrade
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+
+// Do automatic removal of unused packages after the upgrade
+// (equivalent to apt-get autoremove)
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Automatically reboot *WITHOUT CONFIRMATION* if
+//  the file /var/run/reboot-required is found after the upgrade
+Unattended-Upgrade::Automatic-Reboot "true";
+
+// Automatically reboot even if there are users currently logged in
+// when Unattended-Upgrade::Automatic-Reboot is set to true
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+
+// If automatic reboot is enabled and needed, reboot at the specific
+// time instead of immediately
+//  Default: "now"
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+
+EOF
+fi
+#
+################################################################################
+#
+# Some server settings from ProxMenux useful for non-Proxmox servers
+#
+echo "Tuning Server Settings"
+
+echo "- Increasing System limits..."
+cat > /etc/sysctl.d/99-maxwatches.conf << EOF
+fs.inotify.max_user_watches = 1048576
+fs.inotify.max_user_instances = 1048576
+fs.inotify.max_queued_events = 1048576
+EOF
+
+cat > /etc/security/limits.d/99-limits.conf << EOF
+*    soft     nproc          1048576
+*    hard     nproc          1048576
+*    soft     nofile         1048576
+*    hard     nofile         1048576
+*    soft     memlock        unlimited
+*    hard     memlock        unlimited
+root soft     nproc          unlimited
+root hard     nproc          unlimited
+root soft     nofile         unlimited
+root hard     nofile         unlimited
+EOF
+
+cat > /etc/sysctl.d/99-maxkeys.conf << EOF
+kernel.keys.maxbytes=100000000
+kernel.keys.root_maxkeys=1000000
+kernel.keys.maxkeys=1000000
+EOF
+
+cat > /etc/sysctl.d/99-swap.conf << EOF
+vm.swappiness = 10
+vm.vfs_cache_pressure = 100
+EOF
+
+cat > /etc/sysctl.d/99-fs.conf << EOF
+fs.nr_open = 12000000
+fs.file-max = 9223372036854775807
+fs.aio-max-nr = 1048576
+EOF
+
+for file in /etc/systemd/system.conf /etc/systemd/user.conf; do
+	if ! grep -q "^DefaultLimitNOFILE=" "$file"; then
+		echo "DefaultLimitNOFILE=256000" >> "$file"
+	fi
+done
+
+for file in /etc/pam.d/common-session /etc/pam.d/runuser-l; do
+	if ! grep -q "^session required pam_limits.so" "$file"; then
+		echo 'session required pam_limits.so' >> "$file"
+	fi
+done
+
+if ! grep -q "ulimit -n 256000" /root/.profile; then
+	echo "ulimit -n 256000" >> /root/.profile
+fi
+
+echo "- Optimizing memory settings..."
+cat <<EOF > /etc/sysctl.d/99-memory.conf
+# Balanced Memory Optimization
+vm.swappiness = 10
+vm.dirty_ratio = 15
+vm.dirty_background_ratio = 5
+vm.overcommit_memory = 1
+vm.max_map_count = 262144
+EOF
+
+echo "- Configuring kernel panic behavior..."
+cat <<EOF > /etc/sysctl.d/99-kernelpanic.conf
+# Enable restart on kernel panic, kernel oops and hardlockup
+kernel.core_pattern = /var/crash/core.%t.%p
+kernel.panic = 10
+kernel.panic_on_oops = 1
+kernel.hardlockup_panic = 1
+EOF
+
+echo "- Optimizing network settings..."
+cat <<'EOF' > /etc/sysctl.d/99-network.conf
+# ==========================================================
+# ProxMenux - Network tuning (PVE 9 compatible)
+# ==========================================================
+
+# Core buffers & queues
+net.core.netdev_max_backlog = 8192
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.somaxconn = 8192
+
+# IPv4 hardening
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.log_martians = 0
+
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.default.log_martians = 0
+
+# rp_filter:
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
+
+# ICMP
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# TCP/IP
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_rfc1337 = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_rmem = 8192 87380 16777216
+net.ipv4.tcp_wmem = 8192 65536 16777216
+
+# Unix sockets
+net.unix.max_dgram_qlen = 4096
+EOF
+
+sysctl --system > /dev/null 2>&1
+#
+################################################################################
+#
+# Entropy settings from ProxMenux
+#
+echo "Configuring entropy generation to prevent slowdowns..."
+
+/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' install haveged > /dev/null 2>&1
+
+cat <<EOF > /etc/default/haveged
+#   -w sets low entropy watermark (in bits)
+DAEMON_ARGS="-w 1024"
+EOF
+
+systemctl daemon-reload > /dev/null 2>&1
+systemctl enable haveged > /dev/null 2>&1
+#
+################################################################################
+#
+# Log2RAM. Modified from ProxMenux
+#
+if [ -f /etc/log2ram.conf ] || [ -d /var/log.hdd ]; then
+	echo "Clearing previous Log2RAM install..."
+
+    systemctl stop log2ram log2ram-daily.timer >/dev/null 2>&1 || true
+    systemctl disable log2ram log2ram-daily.timer >/dev/null 2>&1 || true
+
+    rm -f /etc/cron.d/log2ram /etc/cron.d/log2ram-auto-sync \
+          /etc/cron.hourly/log2ram /etc/cron.daily/log2ram \
+          /etc/cron.weekly/log2ram /etc/cron.monthly/log2ram 2>/dev/null || true
+    rm -f /usr/local/bin/log2ram-check.sh /usr/local/bin/log2ram /usr/sbin/log2ram 2>/dev/null || true
+    rm -f /etc/systemd/system/log2ram.service \
+          /etc/systemd/system/log2ram-daily.timer \
+          /etc/systemd/system/log2ram-daily.service \
+          /etc/systemd/system/sysinit.target.wants/log2ram.service 2>/dev/null || true
+    rm -rf /etc/systemd/system/log2ram.service.d 2>/dev/null || true
+    rm -f /etc/log2ram.conf* 2>/dev/null || true
+    rm -rf /etc/logrotate.d/log2ram /var/log.hdd /tmp/log2ram 2>/dev/null || true
+
+    systemctl daemon-reexec >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl restart cron >/dev/null 2>&1 || true
+fi
+
+RAM_SIZE_GB=$(free -g | awk '/^Mem:/{print $2}')
+RAM_SIZE_MB=$(free -m | awk '/^Mem:/{print $2}')
+[[ -z "$RAM_SIZE_GB" || "$RAM_SIZE_GB" -eq 0 ]] && RAM_SIZE_GB=2
+
+if (( RAM_SIZE_GB <= 2 )); then
+	echo "[WARN] Low RAM detected (${RAM_SIZE_MB}M). Disabling Log2RAM."
+	ENABLE_LOG2RAM=FALSE; LOG2RAM_SIZE="128M"
+elif (( RAM_SIZE_GB <= 8 )); then
+	LOG2RAM_SIZE="256M"; CRON_HOURS=1
+elif (( RAM_SIZE_GB <= 16 )); then
+	LOG2RAM_SIZE="512M"; CRON_HOURS=2
+elif (( RAM_SIZE_GB <= 32 )); then
+	LOG2RAM_SIZE="1024M"; CRON_HOURS=4
+else
+	LOG2RAM_SIZE="2048M"; CRON_HOURS=6
+fi
+
+# Check if we're in an LXC/INCUS container
+# If we are then DON'T run Log2RAM
+grep -qa container=lxc /proc/1/environ
+if [ $? -eq 0 ] ; then
+	echo "[WARN] Container detected. Disabling Log2RAM."
+	ENABLE_LOG2RAM=FALSE
+fi
+
+rm -rf /tmp/log2ram 2>/dev/null || true
+if [ "$ENABLE_LOG2RAM" == "TRUE" ] ; then
+	if git clone https://github.com/azlux/log2ram.git /tmp/log2ram >/dev/null 2>>/tmp/log2ram_install.log; then
+		echo "Configuring Log2RAM..."
+		cd /tmp/log2ram
+		bash install.sh
+
+		systemctl enable --now log2ram >/dev/null 2>&1 || true
+		systemctl daemon-reload >/dev/null 2>&1 || true
+
+		echo "- Detected RAM: $RAM_SIZE_GB GB"
+		echo "- Log2RAM size set to: $LOG2RAM_SIZE"
+		sed -i "s/^SIZE=.*/SIZE=$LOG2RAM_SIZE/" /etc/log2ram.conf
+
+		LOG2RAM_BIN="$(command -v log2ram || echo /usr/sbin/log2ram)"
+
+		cat > /etc/cron.d/log2ram <<EOF
+# Log2RAM periodic sync - Created by ProxMenux
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+0 */$CRON_HOURS * * * root $LOG2RAM_BIN write >/dev/null 2>&1
+EOF
+		chmod 0644 /etc/cron.d/log2ram
+		chown root:root /etc/cron.d/log2ram
+		echo "Log2RAM write scheduled every $CRON_HOURS hour(s)"
+
+		cat > /usr/local/bin/log2ram-check.sh <<'EOF'
+#!/usr/bin/env bash
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+CONF_FILE="/etc/log2ram.conf"
+L2R_BIN="$(command -v log2ram || true)"
+[[ -z "$L2R_BIN" && -x /usr/sbin/log2ram ]] && L2R_BIN="/usr/sbin/log2ram"
+[[ -z "$L2R_BIN" ]] && exit 0
+
+SIZE_MiB="$(grep -E '^SIZE=' "$CONF_FILE" 2>/dev/null | cut -d'=' -f2 | tr -dc '0-9')"
+[[ -z "$SIZE_MiB" ]] && SIZE_MiB=128
+LIMIT_BYTES=$(( SIZE_MiB * 1024 * 1024 ))
+THRESHOLD_BYTES=$(( LIMIT_BYTES * 90 / 100 ))
+
+USED_BYTES="$(df -B1 --output=used /var/log 2>/dev/null | tail -1 | tr -dc '0-9')"
+[[ -z "$USED_BYTES" ]] && exit 0
+
+LOCK="/run/log2ram-check.lock"
+exec 9>"$LOCK" 2>/dev/null || exit 0
+flock -n 9 || exit 0
+
+if (( USED_BYTES > THRESHOLD_BYTES )); then
+  "$L2R_BIN" write 2>/dev/null || true
+fi
+EOF
+		chmod +x /usr/local/bin/log2ram-check.sh
+
+		cat > /etc/cron.d/log2ram-auto-sync <<'EOF'
+# Log2RAM auto-sync based on /var/log usage - Created by ProxMenux
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+*/5 * * * * root /usr/local/bin/log2ram-check.sh >/dev/null 2>&1
+EOF
+		chmod 0644 /etc/cron.d/log2ram-auto-sync
+		chown root:root /etc/cron.d/log2ram-auto-sync
+
+		systemctl restart cron >/dev/null 2>&1 || true
+		echo "Auto-sync enabled when /var/log exceeds 90% of $LOG2RAM_SIZE"
+
+		if [ ! -d /var/log.hdd ] ; then
+			mkdir -p /var/log.hdd
+			chown root:root /var/log.hdd
+		fi
+	fi
+fi
+
+echo "Adjusting systemd-journald limits..."
+if [[ -f /etc/systemd/journald.conf ]]; then
+	cp -n /etc/systemd/journald.conf /etc/systemd/journald.conf.bak.$(date +%Y%m%d-%H%M%S)
+fi
+
+SIZE_MB=$(echo "$LOG2RAM_SIZE" | tr -dc '0-9')
+USE_MB=$(( SIZE_MB * 55 / 100 ))
+KEEP_MB=$(( SIZE_MB * 10 / 100 ))
+RUNTIME_MB=$(( SIZE_MB * 25 / 100 ))
+
+[ "$USE_MB" -lt 80 ] && USE_MB=80
+[ "$RUNTIME_MB" -lt 32 ] && RUNTIME_MB=32
+[ "$KEEP_MB" -lt 8 ] && KEEP_MB=8
+
+
+sed -i '/^\[Journal\]/,$d' /etc/systemd/journald.conf 2>/dev/null || true
+tee -a /etc/systemd/journald.conf >/dev/null <<EOF
+[Journal]
+Storage=persistent
+SplitMode=none
+RateLimitIntervalSec=30s
+RateLimitBurst=1000
+ForwardToSyslog=no
+ForwardToWall=no
+Seal=no
+Compress=yes
+SystemMaxUse=${USE_MB}M
+SystemKeepFree=${KEEP_MB}M
+RuntimeMaxUse=${RUNTIME_MB}M
+MaxLevelStore=warning
+MaxLevelSyslog=warning
+MaxLevelKMsg=warning
+MaxLevelConsole=notice
+MaxLevelWall=crit
+EOF
+
+systemctl restart systemd-journald >/dev/null 2>&1 || true
+echo "Journald configuration adjusted to ${USE_MB}M (Log2RAM ${LOG2RAM_SIZE})"
+#
+################################################################################
+#
+# Optimize logrotate
+#
+if ! grep -q "# RAM optimized configuration" "/etc/logrotate.conf"; then
+	echo "Optimizing logrotate configuration..."
+	cp -f "/etc/logrotate.conf" "/etc/logrotate.conf.bak" 2>/dev/null
+	cat <<EOF > "/etc/logrotate.conf"
+# RAM optimized configuration (Log2RAM-friendly)
+daily
+su root adm
+rotate 7
+size=10M
+compress
+delaycompress
+missingok
+notifempty
+create 0640 root adm
+copytruncate
+include /etc/logrotate.d
+EOF
+	systemctl restart logrotate > /dev/null 2>&1
+fi
+#
+################################################################################################################################################################
 #
 if [ ! -f /var/lib/plocate/plocate.db ] ; then
 	echo "Updating plocate.db"
 	updatedb
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 if [ ! -f /root/.hushlogin ] ; then
 	echo "Setting root .hushlogin"
@@ -644,206 +1042,25 @@ if [ ! -f /etc/skel/.hushlogin ] ; then
 	touch /etc/skel/.hushlogin
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
-echo "Installing 'nginx'."
-apt-get -y install nginx-core php-fpm php-xml &>/dev/null
-#
-################################################################################
-#
-echo "Creating 'setup-https' script."
-#
-# Remove old script
-#
-[ -f /usr/local/bin/setup-https-redirect ] && rm -f /usr/local/bin/setup-https-redirect
-#
-# Create new script
-#
-cat <<FEOF >/usr/local/bin/setup-https
-#!/bin/bash
-#
-# Setup an HTTPS on 443.
-#
-DHPARAM_BITS=2048
-[ ! -f /etc/default/dhparam ] && echo "DHPARAM_BITS=2048" > /etc/default/dhparam
-. /etc/default/dhparam
-#
-# Check we have a dhparam file.
-#
-if [ ! -f /etc/ssl/dhparam.pem ] ; then
-    echo "Generating \${DHPARAM_BITS} bit dhparam.pem file"
-    openssl dhparam -out /etc/ssl/dhparam.pem \${DHPARAM_BITS}
-fi
-#
-# Work out which cert/key files to use.
-#
-CERT_FILE=/etc/pve/local/pve-ssl.pem
-CERT_KEY_FILE=/etc/pve/local/pve-ssl.key
-#
-# Check for ACME Cert
-#
-if [ -f /etc/pve/local/pveproxy-ssl.pem ] ; then
-    CERT_FILE=/etc/pve/local/pveproxy-ssl.pem
-    CERT_KEY_FILE=/etc/pve/local/pveproxy-ssl.key
-fi
-#
-# Check if we're on a Proxmox Backup Server
-#
-if [ -d /etc/proxmox-backup/ ] ; then
-    CERT_FILE=/etc/proxmox-backup/proxy.pem
-    CERT_KEY_FILE=/etc/proxmox-backup/proxy.key
-fi
-#
-# Generate nginx SSL configuration file.
-#
-mkdir -p /etc/nginx/ssl
-cat <<EOF >/etc/nginx/ssl/pve.conf
-# Global SSL configuration
-#ssl on;
-ssl_certificate \${CERT_FILE};
-ssl_certificate_key \${CERT_KEY_FILE};
-ssl_dhparam /etc/ssl/dhparam.pem;
-
-
-# Security (Prevent POODLE & co.)
-ssl_prefer_server_ciphers on;
-ssl_protocols TLSv1.2 TLSv1.3;
-ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256';
-ssl_ecdh_curve secp384r1; # Requires nginx >= 1.1.0
-add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
-add_header X-Frame-Options SAMEORIGIN;
-add_header X-Content-Type-Options nosniff;
-
-ssl_session_timeout 1d;
-ssl_session_cache shared:SSL:50m;
-ssl_session_tickets on;
-
-ssl_stapling on;
-ssl_stapling_verify on;
-resolver 8.8.4.4 8.8.8.8 valid=300s;
-resolver_timeout 10s;
-
-gzip off;
-EOF
-#
-# Reconfigure nginx
-#
-service nginx stop
-systemctl disable nginx
-cat <<EOF >/usr/lib/systemd/system/pvenginx.service
-# Stop dance for nginx
-# =======================
-#
-# ExecStop sends SIGQUIT (graceful stop) to the nginx process.
-# If, after 5s (--retry QUIT/5) nginx is still running, systemd takes control
-# and sends SIGTERM (fast shutdown) to the main process.
-# After another 5s (TimeoutStopSec=5), and if nginx is alive, systemd sends
-# SIGKILL to all the remaining processes in the process group (KillMode=mixed).
-#
-# nginx signals reference doc:
-# http://nginx.org/en/docs/control.html
-#
-[Unit]
-Description=A high performance web server and a reverse proxy server
-Documentation=man:nginx(8)
-After=network-online.target remote-fs.target nss-lookup.target
-Wants=network-online.target
-
-[Service]
-Type=forking
-PIDFile=/run/nginx.pid
-ExecStartPre=sleep 10
-ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
-ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
-ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/nginx.pid
-TimeoutStopSec=5
-KillMode=mixed
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl enable pvenginx
-service pvenginx start
-service pvenginx restart
-#
-# Finished
-#
-exit 0
-FEOF
-chmod a+x /usr/local/bin/setup-https
-echo "Setting up HTTPS, this will need to be re-run if you add ACME certificates to node."
-echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more information."
-/usr/local/bin/setup-https &>/dev/null
-#
-################################################################################
-#
-echo "Installing PHPSYSINFO on port 443 (HTTPS)"
-rm -f /etc/nginx/sites-available/phpsysinfo &>/dev/null 2>&1
-cat <<EOF >/etc/nginx/sites-available/phpsysinfo
-##
-#
-# nginx config for phpsysinfo
-#
-server {
-    listen 443 ssl http2 default_server;
-    include ssl/pve.conf;
-
-    root /var/www/phpsysinfo;
-    index index.php;
-    server_name _;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-
-    location /pve {
-        return 302 https://\$host:8006;
-    }
-
-    location ~ \.php\$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php-fpm.sock;
-    }
-}
-EOF
-rm /etc/nginx/sites-enabled/* &>/dev/null 2>&1
-ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
-if [ ! -d /var/www/phpsysinfo/.git ] ; then
-    git pull &>/dev/null
-fi
-if [ ! -d /var/www/phpsysinfo ] ; then
-    cd /var/www
-    git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
-fi
-cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
-#
-# Update settings
-#
-sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
-sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
-sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
-sed -i 's\SHOW_CPULIST_EXPANDED=true\SHOW_CPULIST_EXPANDED=false\' /var/www/phpsysinfo/phpsysinfo.ini
-sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
-sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev,fuse"\' /var/www/phpsysinfo/phpsysinfo.ini
-#
-# Restart nginx
-#
-service pvenginx restart
-#
-################################################################################
-#
-echo "Installing 'spectre-meltdown-checker' to /usr/local/bin"
+echo "Installing 'spectre-meltdown-checker' to /usr/bin"
 if [ ! -d /usr/share/spectre-meltdown-checker ] ; then
-    git clone https://github.com/speed47/spectre-meltdown-checker /usr/share/spectre-meltdown-checker &>/dev/null
+    git clone https://github.com/speed47/spectre-meltdown-checker /usr/share/spectre-meltdown-checker >/dev/null
 else
     cd /usr/share/spectre-meltdown-checker
-    git pull  &>/dev/null
+    git pull  >/dev/null
 fi
 chmod a+x /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh
 [ -f /usr/local/bin/spectre-meltdown-checker ] && rm /usr/local/bin/spectre-meltdown-checker
-ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/local/bin/spectre-meltdown-checker
+[ -f /usr/bin/spectre-meltdown-checker ]       && rm /usr/bin/spectre-meltdown-checker
+ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/bin/spectre-meltdown-checker
 #
-################################################################################
+################################################################################################################################################################
+#
+echo "Install date: `date`" > /etc/pve/.setup
+#
+################################################################################################################################################################
 #
 get_proxmox_version
 read -r -p "Reboot ${PROXMOX_VERSION} now? <y/N> " prompt
@@ -852,4 +1069,4 @@ if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]
     reboot
 fi
 #
-################################################################################
+################################################################################################################################################################

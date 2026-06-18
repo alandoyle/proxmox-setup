@@ -1,0 +1,855 @@
+#!/bin/bash
+#
+# My Proxmox VE 8.2+/Proxmox Backup Server 3.2+ setup script
+#
+# Copyright (C) 2022-2026 Alan Doyle
+#
+# https://github.com/alandoyle/proxmox-setup/
+#
+# License: MIT
+# Based in part on some scripts from https://github.com/tteck/Proxmox/
+#
+################################################################################
+VERSION_ID="1"
+. /etc/os-release
+################################################################################
+get_proxmox_version()
+{
+    if [ -f /usr/bin/pveversion ] ; then
+        PROXMOX_VERSION="Proxmox VE `/usr/bin/pveversion|cut -d/ -f2`"
+        PROXMOX_TYPE=pve
+        STARSHIP_COLOR1=#3B4252
+        STARSHIP_COLOR2=#4C566A
+        STARSHIP_COLOR3=#86BBD8
+    elif [ -f /usr/sbin/proxmox-backup-manager ] ; then
+        PROXMOX_VERSION="Proxmox Backup Server `/usr/sbin/proxmox-backup-manager versions | cut -d ' ' -f5`"
+        PROXMOX_TYPE=pbs
+        STARSHIP_COLOR1=#3B5242
+        STARSHIP_COLOR2=#4C6A56
+        STARSHIP_COLOR3=#86D9BA
+    else
+        PROXMOX_VERSION="UNKNOWN!!!!"
+        PROXMOX_TYPE=unknown
+    fi
+}
+################################################################################
+#
+# Root check
+#
+if [ `id -u` -ne 0 ] ; then
+    echo "ERROR: This script needs to be run as root or using sudo."
+    exit 99
+fi
+#
+################################################################################
+#
+# Check it's actually a Proxmox server
+#
+if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
+    echo "ERROR: This script needs to be run on a Proxmox Server only."
+    exit 98
+fi
+#
+################################################################################
+#
+# Check versions
+#
+if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 12 -o "${VERSION_CODENAME}" = "trixie" ] ; then
+    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox Backup Server 3.2 (or higher)"
+    echo "NOTE: Neither Proxmox VE 9.x nor Proxmox Backup Server 4.x is currently supported by this version."
+    exit 97
+fi
+#
+################################################################################
+#
+# Include OS details
+#
+get_proxmox_version
+echo "Setting up ${PROXMOX_VERSION}"
+#
+################################################################################
+#
+# Setup repositories
+#
+echo "Disabling Enterprise Repositories"
+if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list ] ; then
+    sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list
+fi
+if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
+    cat <<EOF >/etc/apt/sources.list.d/ceph.list
+# deb http://download.proxmox.com/debian/ceph-quincy bookworm enterprise
+deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
+EOF
+fi
+#
+################################################################################
+#
+echo "Setup APT Sources"
+cat <<EOF >/etc/apt/sources.list
+# Debian repositories
+deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free non-free-firmware
+
+# Security updates
+deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free non-free-firmware
+
+# Proxmox repositories
+deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}-no-subscription
+# deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}test
+
+EOF
+#
+################################################################################
+#
+echo "Upgrade Proxmox (please be patient)"
+apt-get update &>/dev/null
+apt-get -y dist-upgrade &>/dev/null
+#
+################################################################################
+#
+if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+    echo "Disable Subscription Nag"
+    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
+
+    apt-get --reinstall install proxmox-widget-toolkit &>/dev/null
+fi
+#
+################################################################################
+#
+echo "Adding additional applications"
+GRUBEFI=
+if [ -f /boot/efi/EFI/proxmox/grubx64.efi ] ; then
+    GRUBEFI=grub-efi-amd64
+fi
+
+CPU_VENDOR=`cat /proc/cpuinfo | grep vendor_id | uniq | awk -F: '{ print $2 }' | tr -d "[:blank:]"`
+CPU_MICROCODE=
+case $CPU_VENDOR in
+    GenuineIntel)  CPU_MICROCODE=intel-microcode ;;
+    AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
+esac
+
+apt-get -y install sudo neovim aptitude lsscsi git curl gnupg p7zip p7zip-full unrar-free lm-sensors zip unzip btop exa iotop nala plocate rsync powertop command-not-found lshw ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
+#
+################################################################################
+#
+echo "Adding non-repository applications"
+if [ ! -f /usr/sbin/hddtemp ] ; then
+    wget http://ftp.uk.debian.org/debian/pool/main/h/hddtemp/hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+    if [ -f hddtemp_0.3-beta15-54_amd64.deb ] ; then
+        dpkg -i hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+        rm hddtemp_0.3-beta15-54_amd64.deb &>/dev/null
+    fi
+fi
+
+chmod u+s /usr/sbin/hddtemp
+#
+################################################################################
+#
+echo "Installing FASTFETCH (`uname -m`)"
+FASTFETCH_URL=https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-amd64.deb
+curl --fail --silent --location --output /tmp/fastfetch-linux.deb "${FASTFETCH_URL}"
+dpkg -i /tmp/fastfetch-linux.deb &>/dev/null
+[ -f /tmp/fastfetch-linux.deb ] && rm /tmp/fastfetch-linux.deb 2>/dev/null
+#
+#################################################################################
+#
+echo "Configuring applications"
+apt-file update &>/dev/null
+update-command-not-found &>/dev/null
+if [ !  -f /etc/skel/.config/nvim/init.vim ] ; then
+	[ ! -d /etc/skel/.config/nvim ] && mkdir -p /etc/skel/.config/nvim
+	cat <<EOF >/etc/skel/.config/nvim/init.vim
+set nocompatible            " disable compatibility to old-time vi
+set showmatch               " show matching
+set ignorecase              " case insensitive
+" set mouse=v                 " middle-click paste with
+set hlsearch                " highlight search
+set incsearch               " incremental search
+set tabstop=4               " number of columns occupied by a tab
+set softtabstop=4           " see multiple spaces as tabstops so <BS> does the right thing
+set expandtab               " converts tabs to white space
+set shiftwidth=4            " width for autoindents
+set autoindent              " indent a new line the same amount as the line just typed
+" set number                  " add line numbers
+set wildmode=longest,list   " get bash-like tab completions
+" set cc=80                   " set an 80 column border for good coding style
+filetype plugin indent on   "allow auto-indenting depending on file type
+syntax on                   " syntax highlighting
+" set mouse=a                 " enable mouse click
+set clipboard=unnamedplus   " using system clipboard
+filetype plugin on
+" set cursorline              " highlight current cursorline
+set ttyfast                 " Speed up scrolling in Vim
+" set spell                 " enable spell check (may need to download language package)
+" set noswapfile            " disable creating swap file
+" set backupdir=~/.cache/vim " Directory to store backup files.
+EOF
+fi
+if [ !  -f /etc/vim/vimrc.local ] ; then
+    cat <<EOF >/etc/vim/vimrc.local
+if filereadable("\$VIMRUNTIME/defaults.vim")
+  source \$VIMRUNTIME/defaults.vim
+endif
+" now set the line that the defaults file is not reloaded afterwards!
+let skip_defaults_vim = 1
+" turn off mouse
+set mouse=
+" other override settings go here
+syntax on
+EOF
+fi
+update-alternatives --set vi /usr/bin/nvim >/dev/null
+update-alternatives --set vim /usr/bin/nvim >/dev/null
+update-alternatives --set view /usr/libexec/neovim/view >/dev/null
+#
+################################################################################
+#
+echo "Installing STARSHIP (`uname -m`)"
+STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
+if [ "`uname -m`" = "aarch64" ] ; then
+	STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-aarch64-unknown-linux-musl.tar.gz
+fi
+curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
+tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
+[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
+mv starship /usr/local/bin/starship
+chown root:root /usr/local/bin/starship
+rm -f /tmp/starship.tar.gz
+#
+################################################################################
+#
+echo "Creating STARSHIP profiles"
+cat <<EOF >/etc/starship.toml
+# Simple starship.toml file
+format = """
+[ ](bg:${STARSHIP_COLOR1})\\
+\$username\\
+\$hostname\\
+\$shell\\
+[](fg:${STARSHIP_COLOR1} bg:${STARSHIP_COLOR2})\\
+\$directory\\
+[](fg:${STARSHIP_COLOR2} bg:${STARSHIP_COLOR3})\\
+\$git_branch\\
+\$git_commit\\
+\$git_status\\
+\$git_state\\
+[](fg:${STARSHIP_COLOR3})\\
+\$cmd_duration\\
+\$line_break\\
+\$character\\
+"""
+command_timeout = 5000
+add_newline = true
+
+[username]
+style_user = "white"
+format = '[\$user](\$style bg:${STARSHIP_COLOR1})'
+
+[hostname]
+style = "bg:${STARSHIP_COLOR1}"
+format = "[@\$hostname ](\$style)"
+
+[shell]
+disabled = false
+bash_indicator = ">_ "
+fish_indicator = "><>"
+zsh_indicator = "%_ "
+powershell_indicator = ">>>"
+cmd_indicator = "<<<"
+unknown_indicator = "?_ "
+style = "bg:${STARSHIP_COLOR1}"
+format = "[\$indicator](\$style)"
+
+[directory]
+truncation_length = 5
+style = "bg:${STARSHIP_COLOR2}"
+format = "[ \$path ](\$style)"
+
+[git_branch]
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
+format = '[ \$symbol$branch ](\$style)'
+
+[git_commit]
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
+format = '[ \$hash ](\$style)'
+
+[git_status]
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
+format = '[\$all_status\$ahead_behind](\$style)'
+
+[git_state]
+style = "bg:${STARSHIP_COLOR3} fg:${STARSHIP_COLOR1}"
+format = '[ \$state(\$progress_current/\$progress_total)](\$style)'
+
+[cmd_duration]
+min_time = 500
+style = "fg:#eb7442"
+format = " took [\$duration](\$style)"
+
+[line_break]
+
+[character]
+success_symbol = '[-](bold green)'
+# would be nice to have sudo module ehre
+error_symbol = '[✕](bold red)'
+vimcmd_symbol = '[N](bold blue) '
+vimcmd_replace_one_symbol = '[R](bold red) '
+vimcmd_replace_symbol = '[R](bold red) '
+vimcmd_visual_symbol = "[V ](bold yellow)"
+EOF
+cat <<EOF >/etc/starship.root.toml
+# Simple starship.toml file
+format = """
+[ ](bg:#5B0000)\\
+\$username\\
+\$hostname\\
+\$shell\\
+[](fg:#5B0000 bg:#A9191C)\\
+\$directory\\
+[](fg:#A9191C bg:#FF3535)\\
+\$git_branch\\
+\$git_commit\\
+\$git_status\\
+\$git_state\\
+[](fg:#FF3535)\\
+\$cmd_duration\\
+\$line_break\\
+\$character\\
+"""
+command_timeout = 5000
+add_newline = true
+
+[username]
+style_user = "white"
+format = '[\$user](\$style bg:#5B0000)'
+
+[hostname]
+style = "bg:#5B0000"
+format = "[@\$hostname ](\$style)"
+
+[shell]
+disabled = false
+bash_indicator = ">_ "
+fish_indicator = "><>"
+zsh_indicator = "%_ "
+powershell_indicator = ">>>"
+cmd_indicator = "<<<"
+unknown_indicator = "?_ "
+style = "bg:#5B0000"
+format = "[\$indicator](\$style)"
+
+[directory]
+truncation_length = 5
+style = "bg:#A9191C"
+format = "[ \$path ](\$style)"
+
+[git_branch]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[ \$symbol\$branch ](\$style)'
+
+[git_commit]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[ \$hash ](\$style)'
+
+[git_status]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[\$all_status\$ahead_behind](\$style)'
+
+[git_state]
+style = "bg:#FF3535 fg:#5B0000"
+format = '[ \$state(\$progress_current/\$progress_total)](\$style)'
+
+[cmd_duration]
+min_time = 500
+style = "fg:#eb7442"
+format = " took [\$duration](\$style)"
+
+[line_break]
+
+[character]
+success_symbol = '[-](bold green)'
+# would be nice to have sudo module here
+error_symbol = '[✕](bold red)'
+vimcmd_symbol = '[N](bold blue) '
+vimcmd_replace_one_symbol = '[R](bold red) '
+vimcmd_replace_symbol = '[R](bold red) '
+vimcmd_visual_symbol = "[V ](bold yellow)"
+EOF
+
+# Update /etc/skel
+[ ! -d /etc/skel/.config ] && mkdir -p /etc/skel/.config
+[ -f /etc/skel/.config/starship.toml ] && rm -f /etc/skel/.config/starship.toml
+ln -sf /etc/starship.toml /etc/skel/.config/starship.toml
+#
+################################################################################
+#
+echo "Updating BASH profile"
+
+# NeoVIM
+cat <<EOF >/etc/profile.d/neovim.sh
+if [ ! -f ~/.config/nvim/init.vim ] ; then
+	[ ! -d ~/.config/nvim ] && mkdir -p ~/.config/nvim
+	cp /etc/skel/.config/nvim/init.vim ~/.config/nvim
+fi
+EOF
+
+# Neofetch
+[ -f /etc/profile.d/neofetch.sh ] && rm /etc/profile.d/neofetch.sh
+cat <<EOF >/etc/profile.d/sysinfo.sh
+if [ "\${SUDO_USER}" = "" ] ; then
+    clear
+    fastfetch -l pve
+    if [ -f /usr/bin/incus ] ; then
+        echo -e "\n\tINCUS CONTAINERS"
+        incus ls -cns4
+    fi
+    if [ -f /usr/bin/docker ] ; then
+        echo -e "\n\tDOCKER CONTAINERS\n-------------------------------------------------------------------------------"
+        docker ps --format "table {{.Names}}\t{{.State}}\t{{.Status}}\t{{.Ports}}"
+    fi
+    if [ -f /usr/sbin/pct ] ; then
+        echo -e "\n\tLXC CONTAINERS\n-------------------------------------------------------------------------------"
+        sudo /usr/sbin/pct list
+    fi
+    if [ -f  /usr/sbin/qm ] ; then
+        echo -e "\n\tKVM MACHINES\n-------------------------------------------------------------------------------"
+        sudo /usr/sbin/qm list
+    fi
+fi
+EOF
+
+# Proxmox VE specific aliases
+if [ "${PROXMOX_TYPE}" = "pve" ] ; then
+    cat <<EOF >/etc/profile.d/proxmox.sh
+alias lsct='sudo /usr/sbin/pct list'
+alias lsvm='sudo /usr/sbin/qm list'
+EOF
+fi
+
+# Add Storage path (if available)
+if [ "${PROXMOX_TYPE}" = "pve" ] ; then
+    cat <<EOF >/etc/profile.d/storage-path.sh
+if [ -d /Storage/bin ] ; then
+    export PATH=\$PATH:/Storage/bin
+fi
+EOF
+fi
+
+# Terminal
+cat <<EOF >/etc/profile.d/term.sh
+if [ -z \${SSH_TTY} ] ; then
+	export TERM=linux
+fi
+EOF
+
+# Quoting Style
+echo "export QUOTING_STYLE=literal" > /etc/profile.d/quoting_style.sh
+
+# Starship
+cat <<EOF >/etc/profile.d/starship.sh
+tty | grep tty >/dev/null
+
+# Only display for remote connections
+if [ -f /usr/local/bin/starship -a \$? -ne 0 ] ; then
+	[ ! -d ~/.config ] && mkdir -p ~/.config
+	[ -f ~/.config/starship.toml ] && rm -f ~/.config/starship.toml
+	if [ \`id -u\` -eq 0 ] ; then
+		ln -sf /etc/starship.root.toml ~/.config/starship.toml
+	else
+		ln -sf /etc/starship.toml ~/.config/starship.toml
+	fi
+	eval "\$(starship init bash)"
+fi
+EOF
+
+# Update /root/.bashrc
+echo "Updating /root/.bashrc"
+echo -e "#\n# PROFILE UPDATE\nps -p 2 >/dev/null # LXD Container check\nif [ \$? -ne 0 -o \"\${SUDO_USER}\" != \"\" ] ; then\n\t. /root/.bash_aliases\nfi" >> /root/.bashrc
+#
+################################################################################
+#
+apt-mark hold firmware-linux-free &>/dev/null
+if [ -d /usr/lib/firmware.prev ] ; then
+    echo "Update firmware"
+    cd /usr/lib/firmware
+    git config pull.rebase false
+    git pull &>/dev/null
+else
+    echo "Download firmware"
+    mv /usr/lib/firmware /usr/lib/firmware.prev
+    cd /usr/lib
+    git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git firmware &>/dev/null
+fi
+#
+################################################################################
+#
+if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
+    echo "Enable IOMMU"
+    IOMMU_CPU="amd_iommu=on"
+    dmidecode -s processor-manufacturer | grep Intel &>/dev/null
+    [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
+    cat <<EOF >/etc/default/grub.d/iommu.cfg
+# Enable IOMMU
+GRUB_CMDLINE_LINUX_DEFAULT="${IOMMU_CPU} iommu=pt \${GRUB_CMDLINE_LINUX_DEFAULT}"
+#
+# NOTE: Only enable the following line IF there are problems with PCI passthru
+# GRUB_CMDLINE_LINUX_DEFAULT="pcie_acs_override=downstream,multifunction \${GRUB_CMDLINE_LINUX_DEFAULT}"
+EOF
+    cat <<EOF >>/etc/modules
+vfio
+vfio_iommu_type1
+vfio_pci
+vfio_virqfd
+EOF
+    update-initramfs -u -k all &>/dev/null
+    update-grub2 &>/dev/null
+fi
+if [ ! -f /usr/local/bin/lsiommu ] ; then
+    cat <<EOF >>/usr/local/bin/lsiommu
+#!/bin/bash
+for d in \$(find /sys/kernel/iommu_groups/ -type l | sort -n -k5 -t/); do
+    n=\${d#*/iommu_groups/*}; n=\${n%%/*}
+    printf '[Group %s] ' "\$n"
+    lspci -nns "\${d##*/}"
+done;
+EOF
+    chmod a+x /usr/local/bin/lsiommu
+fi
+#
+################################################################################
+#
+echo "[ -f /etc/bash.aliases ] && . /etc/bash.aliases" > /etc/profile.d/aliases.sh
+cat <<EOF >/etc/bash.aliases
+
+alias dfspace='df -hT -x udev -x tmpfs -x cgmfs -x snap -x devtmpfs -x fuse -x overlay -x efivarfs'
+alias pg='less'
+alias cls='clear'
+alias btop='btop --utf-force'
+alias goroot='sudo -s'
+alias go64='sudo -s'
+
+# Change directory aliases
+alias home='cd ~'
+alias cd..='cd ..'
+
+# cd into the old directory
+alias bd='cd "\$OLDPWD"'
+
+# Remove a directory and all files
+alias rmd='/bin/rm  --recursive --force --verbose '
+
+# Alias's for multiple directory listing commands
+alias ls='exa -H --group-directories-first'
+alias la='exa -alh' # show hidden files
+alias lf='exa -aFh --color=always' # add colors and file type extensions
+alias lx='exa -l --sort=ext' # sort by extension
+alias lk='exa -l --sort=size' # sort by size
+alias lc='exa -l --sort=mod' # sort by modified time
+alias lu='exa -l --sort=acc' # sort by access time
+alias lr='exa -lR' # recursive ls
+alias lt='exa -l --sort=new' # sort by date
+alias lm='exa -al |more' # pipe through 'more'
+alias lw='exa -xa' # wide listing format
+alias ll='exa -alF --group-directories-first' # long listing format
+alias labc='exa -l --sort=name' #alphabetical sort
+alias lff="exa -l | egrep -v '^d'" # files only
+alias ldir="exa -l | egrep '^d'" # directories only
+
+# Search command line history
+alias h='history | grep '
+
+# Hardware info
+alias meminfo='sudo lshw -short -C memory'
+
+# Alias's for archives
+alias mktar='tar -cvf'
+alias mkbz2='tar -cvjf'
+alias mkgz='tar -cvzf'
+alias untar='tar -xvf'
+alias unbz2='tar -xvjf'
+alias ungz='tar -xvzf'
+
+# Extracts any archive(s) (if unp isn't installed)
+extract () {
+	for archive in "\$@"; do
+		if [ -f "\$archive" ] ; then
+			case \$archive in
+				*.tar.bz2)   tar xvjf \$archive    ;;
+				*.tar.gz)    tar xvzf \$archive    ;;
+				*.bz2)       bunzip2 \$archive     ;;
+				*.rar)       unrar -x \$archive    ;;
+				*.gz)        gunzip \$archive      ;;
+				*.tar)       tar xvf \$archive     ;;
+				*.tbz2)      tar xvjf \$archive    ;;
+				*.tgz)       tar xvzf \$archive    ;;
+				*.zip)       unzip \$archive       ;;
+				*.Z)         uncompress \$archive  ;;
+				*.7z)        7z x \$archive        ;;
+				*)           echo "don't know how to extract '\$archive'..." ;;
+			esac
+		else
+			echo "'\$archive' is not a valid file!"
+		fi
+	done
+}
+
+# Disk usage support
+alias used='du -sh'
+alias usedm='du -s --block-size=1M'
+alias usedg='du -s --block-size=1G'
+
+# sudo quick shortcuts
+alias reboot='sudo /usr/sbin/reboot'
+alias su-vi='sudo vi'
+alias su-nano='sudo nano'
+alias su-rm='sudo rm'
+alias su-cp='sudo cp'
+alias su-mv='sudo mv'
+alias su-md='sudo mkdir -p'
+alias dmesg='sudo /usr/bin/dmesg'
+alias mount='sudo /usr/bin/mount'
+alias umount='sudo /usr/bin/umount'
+alias iotop='sudo /usr/sbin/iotop'
+alias apt='sudo nala'
+alias powertop='sudo /usr/sbin/powertop'
+alias systemctl='sudo /usr/bin/systemctl'
+
+EOF
+
+# Create a new .bash_aliases for root
+cat <<EOF >/root/.bash_aliases
+ps -p 2 >/dev/null # LXD Container check
+if [ \$? -ne 0 -o "\${SUDO_USER}" != "" ] ; then
+	. /etc/profile
+fi
+EOF
+
+#
+################################################################################
+#
+if [ ! -f /var/lib/plocate/plocate.db ] ; then
+	echo "Updating plocate.db"
+	updatedb
+fi
+#
+################################################################################
+#
+if [ ! -f /root/.hushlogin ] ; then
+	echo "Setting root .hushlogin"
+	touch /root/.hushlogin
+fi
+if [ ! -f /etc/skel/.hushlogin ] ; then
+	echo "Setting default .hushlogin"
+	touch /etc/skel/.hushlogin
+fi
+#
+################################################################################
+#
+echo "Installing 'nginx'."
+apt-get -y install nginx-core php-fpm php-xml &>/dev/null
+#
+################################################################################
+#
+echo "Creating 'setup-https' script."
+#
+# Remove old script
+#
+[ -f /usr/local/bin/setup-https-redirect ] && rm -f /usr/local/bin/setup-https-redirect
+#
+# Create new script
+#
+cat <<FEOF >/usr/local/bin/setup-https
+#!/bin/bash
+#
+# Setup an HTTPS on 443.
+#
+DHPARAM_BITS=2048
+[ ! -f /etc/default/dhparam ] && echo "DHPARAM_BITS=2048" > /etc/default/dhparam
+. /etc/default/dhparam
+#
+# Check we have a dhparam file.
+#
+if [ ! -f /etc/ssl/dhparam.pem ] ; then
+    echo "Generating \${DHPARAM_BITS} bit dhparam.pem file"
+    openssl dhparam -out /etc/ssl/dhparam.pem \${DHPARAM_BITS}
+fi
+#
+# Work out which cert/key files to use.
+#
+CERT_FILE=/etc/pve/local/pve-ssl.pem
+CERT_KEY_FILE=/etc/pve/local/pve-ssl.key
+#
+# Check for ACME Cert
+#
+if [ -f /etc/pve/local/pveproxy-ssl.pem ] ; then
+    CERT_FILE=/etc/pve/local/pveproxy-ssl.pem
+    CERT_KEY_FILE=/etc/pve/local/pveproxy-ssl.key
+fi
+#
+# Check if we're on a Proxmox Backup Server
+#
+if [ -d /etc/proxmox-backup/ ] ; then
+    CERT_FILE=/etc/proxmox-backup/proxy.pem
+    CERT_KEY_FILE=/etc/proxmox-backup/proxy.key
+fi
+#
+# Generate nginx SSL configuration file.
+#
+mkdir -p /etc/nginx/ssl
+cat <<EOF >/etc/nginx/ssl/pve.conf
+# Global SSL configuration
+#ssl on;
+ssl_certificate \${CERT_FILE};
+ssl_certificate_key \${CERT_KEY_FILE};
+ssl_dhparam /etc/ssl/dhparam.pem;
+
+
+# Security (Prevent POODLE & co.)
+ssl_prefer_server_ciphers on;
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256';
+ssl_ecdh_curve secp384r1; # Requires nginx >= 1.1.0
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+add_header X-Frame-Options SAMEORIGIN;
+add_header X-Content-Type-Options nosniff;
+
+ssl_session_timeout 1d;
+ssl_session_cache shared:SSL:50m;
+ssl_session_tickets on;
+
+ssl_stapling on;
+ssl_stapling_verify on;
+resolver 8.8.4.4 8.8.8.8 valid=300s;
+resolver_timeout 10s;
+
+gzip off;
+EOF
+#
+# Reconfigure nginx
+#
+service nginx stop
+systemctl disable nginx
+cat <<EOF >/usr/lib/systemd/system/pvenginx.service
+# Stop dance for nginx
+# =======================
+#
+# ExecStop sends SIGQUIT (graceful stop) to the nginx process.
+# If, after 5s (--retry QUIT/5) nginx is still running, systemd takes control
+# and sends SIGTERM (fast shutdown) to the main process.
+# After another 5s (TimeoutStopSec=5), and if nginx is alive, systemd sends
+# SIGKILL to all the remaining processes in the process group (KillMode=mixed).
+#
+# nginx signals reference doc:
+# http://nginx.org/en/docs/control.html
+#
+[Unit]
+Description=A high performance web server and a reverse proxy server
+Documentation=man:nginx(8)
+After=network-online.target remote-fs.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/nginx.pid
+ExecStartPre=sleep 10
+ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
+ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
+ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/nginx.pid
+TimeoutStopSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable pvenginx
+service pvenginx start
+service pvenginx restart
+#
+# Finished
+#
+exit 0
+FEOF
+chmod a+x /usr/local/bin/setup-https
+echo "Setting up HTTPS, this will need to be re-run if you add ACME certificates to node."
+echo "- See README.md at https://github.com/alandoyle/proxmox-setup/ for more information."
+/usr/local/bin/setup-https &>/dev/null
+#
+################################################################################
+#
+echo "Installing PHPSYSINFO on port 443 (HTTPS)"
+rm -f /etc/nginx/sites-available/phpsysinfo &>/dev/null 2>&1
+cat <<EOF >/etc/nginx/sites-available/phpsysinfo
+##
+#
+# nginx config for phpsysinfo
+#
+server {
+    listen 443 ssl http2 default_server;
+    include ssl/pve.conf;
+
+    root /var/www/phpsysinfo;
+    index index.php;
+    server_name _;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location /pve {
+        return 302 https://\$host:8006;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+    }
+}
+EOF
+rm /etc/nginx/sites-enabled/* &>/dev/null 2>&1
+ln -s /etc/nginx/sites-available/phpsysinfo /etc/nginx/sites-enabled/phpsysinfo &>/dev/null
+if [ ! -d /var/www/phpsysinfo/.git ] ; then
+    git pull &>/dev/null
+fi
+if [ ! -d /var/www/phpsysinfo ] ; then
+    cd /var/www
+    git clone https://github.com/phpsysinfo/phpsysinfo &>/dev/null
+fi
+cp /var/www/phpsysinfo/phpsysinfo.ini.new /var/www/phpsysinfo/phpsysinfo.ini &>/dev/null
+#
+# Update settings
+#
+sed -i 's\DEFAULT_DISPLAY_MODE="auto"\DEFAULT_DISPLAY_MODE="bootstrap"\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SHOW_PICKLIST_LANG=true\SHOW_PICKLIST_LANG=false\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SHOW_PICKLIST_TEMPLATE=true\SHOW_PICKLIST_TEMPLATE=false\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SHOW_CPULIST_EXPANDED=true\SHOW_CPULIST_EXPANDED=false\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\SENSOR_PROGRAM=false\SENSOR_PROGRAM="HDDtemp,LMSensors"\' /var/www/phpsysinfo/phpsysinfo.ini
+sed -i 's\HIDE_FS_TYPES=""\HIDE_FS_TYPES="tmpfs,devtmpfs,usbfs,bstfolder,udev,fuse"\' /var/www/phpsysinfo/phpsysinfo.ini
+#
+# Restart nginx
+#
+service pvenginx restart
+#
+################################################################################
+#
+echo "Installing 'spectre-meltdown-checker' to /usr/local/bin"
+if [ ! -d /usr/share/spectre-meltdown-checker ] ; then
+    git clone https://github.com/speed47/spectre-meltdown-checker /usr/share/spectre-meltdown-checker &>/dev/null
+else
+    cd /usr/share/spectre-meltdown-checker
+    git pull  &>/dev/null
+fi
+chmod a+x /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh
+[ -f /usr/local/bin/spectre-meltdown-checker ] && rm /usr/local/bin/spectre-meltdown-checker
+ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/local/bin/spectre-meltdown-checker
+#
+################################################################################
+#
+get_proxmox_version
+read -r -p "Reboot ${PROXMOX_VERSION} now? <y/N> " prompt
+if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]]; then
+    echo "Rebooting ${PROXMOX_VERSION}"
+    reboot
+fi
+#
+################################################################################

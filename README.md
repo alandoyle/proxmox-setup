@@ -1,6 +1,16 @@
 # proxmox-setup
 My simple Proxmox setup script for Dev Proxmox servers.
 
+## Special note
+
+This script can be safely run on PVE v9.x/PBS 4.x with a valid subscription as long as it's configured to do so before being run.
+
+To use this script with a subscription run the following command before installing he script.
+
+```
+echo "PROXMOX_ENV=LIVE" > /etc/default/proxmox-setup
+```
+
 ## Features ##
 
  - Supports Proxmox 8.2 or higher
@@ -15,20 +25,20 @@ My simple Proxmox setup script for Dev Proxmox servers.
 
  - Install some extra useful commands
  - Add some handy aliases
- - [PHPSYSINFO](https://phpsysinfo.github.io/phpsysinfo/) on port 443 (HTTPS)
- - Add `setup-https` script to reconfigure PHPSYSINFO if an ACME cert is installed.
+ - Setup Log2RAM and configure journald
+ - Tweak system settings for better performance.
 
 ## Installation ##
 
 From a `root` shell run one of the following commands...
 
-### Full Installation
+### Full PVE v9.x/PBS v4.x Installation
 
 ```
 bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-setup)"
 ```
 
-### Minimal Installation
+### Minimal PVE v9.x/PBS v4.x Installation
 
 ```
 bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-minimal-setup)"
@@ -40,13 +50,14 @@ bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxm
 bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/upgrade-proxmox)"
 ```
 
+### Full PVE v8.x/PBS v3.x Installation
 
-## setup-https (Full Installation only)
+```
+bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-setup-v8)"
+```
 
-`setup-https` is a small script used to set up HTTPS on port 443.
+### Minimal PVE v8.x/PBS v3.x Installation
 
-It can detect and use custom SSL certs i.e. ACME certs (see https://pve.proxmox.com/wiki/Certificate_Management)
-
-It can use the self-signed cert and key `/etc/pve/local/pve-ssl.pem` or an official cert `/etc/pve/local/pveproxy-ssl.pem`
-
-The script is re-runnable and will automatically prefer an official certificate `/etc/pve/local/pveproxy-ssl.pem` thus allowing it to upgrade from a self-signed to a signed certificate easily.
+```
+bash -c "$(wget -qLO - https://github.com/alandoyle/proxmox-setup/raw/main/proxmox-minimal-setup-v8)"
+```

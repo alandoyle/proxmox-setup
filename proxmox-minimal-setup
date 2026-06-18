@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Minimal Proxmox VE 8.2+/Proxmox Backup Server 3.2+ setup script
+# Minimal Proxmox VE 9.0+/Proxmox Backup Server 4.0+ setup script
 #
-# Copyright (C) 2022-2025 Alan Doyle
+# Copyright (C) 2022-2026 Alan Doyle
 #
 # https://github.com/alandoyle/proxmox-setup/
 #
 # License: MIT
-# Based in part on some scripts from https://github.com/tteck/Proxmox/
+# Based originally in part on some scripts from https://github.com/tteck/Proxmox/ and https://github.com/MacRimi/ProxMenux
 #
 ################################################################################
 VERSION_ID="1"
@@ -26,7 +26,8 @@ get_proxmox_version()
         PROXMOX_TYPE=unknown
     fi
 }
-################################################################################
+#
+################################################################################################################################################################
 #
 # Root check
 #
@@ -35,7 +36,7 @@ if [ `id -u` -ne 0 ] ; then
     exit 99
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 # Check it's actually a Proxmox server
 #
@@ -44,14 +45,35 @@ if [ ! -f /etc/grub.d/000_proxmox_boot_header ] ; then
     exit 98
 fi
 #
-################################################################################
+################################################################################################################################################################
 #
 # Check versions
 #
-if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 12 -o "${VERSION_CODENAME}" = "trixie" ] ; then
-    echo "ERROR: This script needs to be run on Proxmox VE 8.2 (or higher) or Proxmox Backup Server 3.2 (or higher)"
-    echo "NOTE: Neither Proxmox VE 9.x nor Proxmox Backup Server 4.x is currently supported."
+if [ "${ID}" != "debian" -o ${VERSION_ID} -lt 13 ] ; then
+    echo "ERROR: This script needs to be run on Proxmox VE 9.x (or higher) or Proxmox Backup Server 4.x (or higher)"
     exit 97
+fi
+#
+################################################################################################################################################################
+#
+# Check if already run
+#
+if [ -f /etc/pve/.setup ] ; then
+    echo "ERROR: This script has already been run."
+    exit 96
+fi
+#
+################################################################################
+#
+# Create default config file if one doesn't exist
+#
+if [ ! -f /etc/default/proxmox-setup ] ; then
+    cat <<EOF >/etc/default/proxmox-setup
+#
+# Set PROXMOX_ENV to LIVE if you have a subscription, otherwise the "No Subscriptions" repos will be enabled.
+#
+PROXMOX_ENV=DEV
+EOF
 fi
 #
 ################################################################################
@@ -59,53 +81,77 @@ fi
 # Include OS details
 #
 get_proxmox_version
-echo "Setting up ${PROXMOX_VERSION}"
+echo "Setting up ${PROXMOX_VERSION} [${PROXMOX_ENV}]"
 #
-################################################################################
+################################################################################################################################################################
 #
 # Setup repositories
 #
-echo "Disabling Enterprise Repositories"
-if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list ] ; then
-    sed -i "s/^deb/#deb/g" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.list
-fi
-if [ -f /etc/apt/sources.list.d/ceph.list ] ; then
-    cat <<EOF >/etc/apt/sources.list.d/ceph.list
-# deb http://download.proxmox.com/debian/ceph-quincy bookworm enterprise
-deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
+if [ "${PROXMOX_ENV}" != "LIVE" ] ; then
+    echo "Configuring TRIXIE repositories"
+    [ ! -d /etc/apt/sources.list.d.SAVED ] && mkdir -p /etc/apt/sources.list.d.SAVED
+    #
+    ################################################################################################################################################################
+    #
+    echo "Disabling Enterprise Repositories"
+    if [ -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources -a ! -f /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources.SAVED ] ; then
+        cp /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources /etc/apt/sources.list.d.SAVED
+        grep "Enabled: false" /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources >/dev/null
+        if [ $? -ne 0 ] ; then
+            cat /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources | grep -v Enabled > /tmp/${PROXMOX_TYPE}-enterprise.sources
+            echo "Enabled: false" >> /tmp/${PROXMOX_TYPE}-enterprise.sources
+            mv /tmp/${PROXMOX_TYPE}-enterprise.sources /etc/apt/sources.list.d/${PROXMOX_TYPE}-enterprise.sources
+        fi
+    fi
+    #
+    ################################################################################################################################################################
+    #
+    if [ ! -f /etc/apt/sources.list.d/proxmox.sources ] ; then
+    echo "Creating 'no-subscription' APT source"
+    cat <<EOF >/etc/apt/sources.list.d/proxmox.sources
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
 EOF
+    fi
+    #
+    ################################################################################################################################################################
+    #
+    if [ -f /etc/apt/sources.list.d/ceph.list -a ! -f /etc/apt/sources.list.d/ceph.list.SAVED ] ; then
+        echo "Updating ceph.sources"
+        cp /etc/apt/sources.list.d/ceph.sources /etc/apt/sources.list.d.SAVED
+        grep "Enabled: false" /etc/apt/sources.list.d/ceph.sources >/dev/null
+        if [ $? -ne 0 ] ; then
+            cat /etc/apt/sources.list.d/ceph.sources | grep -v Enabled > /tmp/ceph.sources
+            echo -e "Enabled: false\n" >> /tmp/ceph.sources
+            echo "Types: deb" >> /tmp/ceph.sources
+            echo "URIs: http://download.proxmox.com/debian/ceph-squid" >> /tmp/ceph.sources
+            echo "Suites: trixie" >> /tmp/ceph.sources
+            echo "Components: no-subscription" >> /tmp/ceph.sources
+            echo "Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" >> /tmp/ceph.sources
+            mv /tmp/ceph.sources /etc/apt/sources.list.d/ceph.sources
+        fi
+    fi
 fi
 #
-################################################################################
-#
-echo "Setup APT Sources"
-cat <<EOF >/etc/apt/sources.list
-# Debian repositories
-deb http://deb.debian.org/debian ${VERSION_CODENAME} main contrib non-free non-free-firmware
-deb http://deb.debian.org/debian ${VERSION_CODENAME}-updates main contrib non-free non-free-firmware
-
-# Security updates
-deb http://security.debian.org/debian-security ${VERSION_CODENAME}-security main contrib non-free non-free-firmware
-
-# Proxmox repositories
-deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}-no-subscription
-# deb http://download.proxmox.com/debian/${PROXMOX_TYPE} ${VERSION_CODENAME} ${PROXMOX_TYPE}test
-
-EOF
-#
-################################################################################
+################################################################################################################################################################
 #
 echo "Upgrade Proxmox (please be patient)"
-apt-get update &>/dev/null
-apt-get -y dist-upgrade &>/dev/null
+apt-get update >/dev/null
+apt-get -y dist-upgrade >/dev/null
 #
 ################################################################################
 #
-if [ ! -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+if [ -f /etc/apt/apt.conf.d/no-nag-script ] ; then
+    rm /etc/apt/apt.conf.d/no-nag-script
+fi
+if [ ! -f /etc/apt/apt.conf.d/99nonagscript ] ; then
     echo "Disable Subscription Nag"
-    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/no-nag-script
+    echo "DPkg::Post-Invoke { \"dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\.js$'; if [ \$? -eq 1 ]; then { echo 'Removing subscription nag from UI...'; sed -i '/data.status/{s/\!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; }; fi\"; };" >/etc/apt/apt.conf.d/99nonagscript
 
-    apt-get --reinstall install proxmox-widget-toolkit &>/dev/null
+    apt-get --reinstall install proxmox-widget-toolkit >/dev/null
 fi
 #
 ################################################################################
@@ -123,29 +169,14 @@ case $CPU_VENDOR in
     AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
 esac
 
-apt-get -y install ${GRUBEFI} ${CPU_MICROCODE} &>/dev/null
-#
-################################################################################
-#
-apt-mark hold firmware-linux-free &>/dev/null
-if [ -d /usr/lib/firmware.prev ] ; then
-    echo "Update firmware"
-    cd /usr/lib/firmware
-    git config pull.rebase false
-    git pull &>/dev/null
-else
-    echo "Download firmware"
-    mv /usr/lib/firmware /usr/lib/firmware.prev
-    cd /usr/lib
-    git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git firmware &>/dev/null
-fi
+apt-get -y install ${GRUBEFI} ${CPU_MICROCODE} >/dev/null
 #
 ################################################################################
 #
 if [ ! -f /etc/default/grub.d/iommu.cfg ] ; then
     echo "Enable IOMMU"
     IOMMU_CPU="amd_iommu=on"
-    dmidecode -s processor-manufacturer | grep Intel &>/dev/null
+    dmidecode -s processor-manufacturer | grep Intel >/dev/null
     [ $? -eq 0 ] && IOMMU_CPU="intel_iommu=on"
     cat <<EOF >/etc/default/grub.d/iommu.cfg
 # Enable IOMMU
@@ -160,10 +191,11 @@ vfio_iommu_type1
 vfio_pci
 vfio_virqfd
 EOF
-    update-initramfs -u -k all &>/dev/null
-    update-grub2 &>/dev/null
+    update-initramfs -u -k all >/dev/null
+    update-grub2 >/dev/null
 fi
 if [ ! -f /usr/local/bin/lsiommu ] ; then
+    echo "Creating 'lsiommu' command"
     cat <<EOF >>/usr/local/bin/lsiommu
 #!/bin/bash
 for d in \$(find /sys/kernel/iommu_groups/ -type l | sort -n -k5 -t/); do
@@ -174,6 +206,24 @@ done;
 EOF
     chmod a+x /usr/local/bin/lsiommu
 fi
+#
+################################################################################################################################################################
+#
+echo "Installing 'spectre-meltdown-checker' to /usr/bin"
+if [ ! -d /usr/share/spectre-meltdown-checker ] ; then
+    git clone https://github.com/speed47/spectre-meltdown-checker /usr/share/spectre-meltdown-checker >/dev/null
+else
+    cd /usr/share/spectre-meltdown-checker
+    git pull  >/dev/null
+fi
+chmod a+x /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh
+[ -f /usr/local/bin/spectre-meltdown-checker ] && rm /usr/local/bin/spectre-meltdown-checker
+[ -f /usr/bin/spectre-meltdown-checker ]       && rm /usr/bin/spectre-meltdown-checker
+ln -s /usr/share/spectre-meltdown-checker/spectre-meltdown-checker.sh /usr/bin/spectre-meltdown-checker
+#
+################################################################################
+#
+echo "Install date: `date`" > /etc/pve/.setup
 #
 ################################################################################
 #
