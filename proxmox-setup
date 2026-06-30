@@ -176,7 +176,7 @@ case $CPU_VENDOR in
     AuthenticAMD)  CPU_MICROCODE=amd64-microcode ;;
 esac
 
-apt-get -y install sudo vim aptitude lsscsi git curl gnupg bash-completion logrotate p7zip p7zip-full unrar-free lm-sensors zip unzip btop iotop plocate rsync powertop command-not-found unattended-upgrades fastfetch lshw ${GRUBEFI} ${CPU_MICROCODE} >/dev/null
+apt-get -y install sudo vim aptitude lsscsi git curl gnupg bash-completion logrotate p7zip p7zip-full unrar-free lm-sensors zip unzip btop iotop plocate rsync powertop command-not-found unattended-upgrades fastfetch lshw starship ${GRUBEFI} ${CPU_MICROCODE} >/dev/null
 #
 ################################################################################################################################################################
 #
@@ -190,18 +190,6 @@ if [ ! -f /usr/sbin/hddtemp ] ; then
 fi
 
 chmod u+s /usr/sbin/hddtemp
-#
-################################################################################################################################################################
-#
-echo "Installing STARSHIP"
-STARSHIP_URL=https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-gnu.tar.gz
-curl --fail --silent --location --output /tmp/starship.tar.gz "${STARSHIP_URL}"
-tar xvf /tmp/starship.tar.gz >/dev/null 2>&1
-[ -f /usr/local/bin/starship ] && rm -f /usr/local/bin/starship
-mv starship /usr/bin/starship
-chown root:root /usr/bin/starship
-chmod a+x /usr/bin/starship
-rm -f /tmp/starship.tar.gz
 #
 #################################################################################
 #
